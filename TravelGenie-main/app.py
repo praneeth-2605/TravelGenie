@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 
 from agent.agent import build_agent_executor
 from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.callbacks import BaseCallbackHandler
+import time
 
 # Load environment variables
 load_dotenv()
@@ -170,6 +172,90 @@ def extract_text_output(output) -> str:
         return "".join(parts)
     return str(output)
 
+# Helper: Callbacks Handler to display progress bars dynamically
+class ProgressCallbackHandler(BaseCallbackHandler):
+    def __init__(self, placeholder):
+        self.placeholder = placeholder
+        self.progress = {
+            "Planner Agent": 30,
+            "Flight Agent": 10,
+            "Hotel Agent": 10,
+            "Weather Agent": 10,
+            "Restaurant Agent": 10,
+            "Maps Agent": 10
+        }
+        self.last_agent = None
+        self.update_display()
+        
+    def update_display(self):
+        emojis = {
+            "Planner Agent": "🧠",
+            "Flight Agent": "✈",
+            "Hotel Agent": "🏨",
+            "Weather Agent": "🌦",
+            "Restaurant Agent": "🍽",
+            "Maps Agent": "📍"
+        }
+        
+        items_html = ""
+        for agent, val in self.progress.items():
+            emoji = emojis.get(agent, "🤖")
+            items_html += f"""
+            <div style="margin-bottom: 18px; font-family: sans-serif;">
+                <div style="display: flex; justify-content: space-between; font-size: 14px; font-weight: 600; color: #1F1B16; margin-bottom: 6px;">
+                    <span>{emoji} {agent}</span>
+                    <span style="color: #D97757; font-weight: bold;">{val}%</span>
+                </div>
+                <div style="background-color: #D3C9B8; border-radius: 10px; height: 10px; overflow: hidden; width: 100%;">
+                    <div style="background: linear-gradient(90deg, #D97757 0%, #E09176 100%); height: 100%; width: {val}%; border-radius: 10px; transition: width 0.3s ease-in-out;"></div>
+                </div>
+            </div>
+            """
+            
+        container_html = f"""
+        <div style="background-color: #EAE5DB; border-radius: 14px; padding: 25px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); max-width: 500px; margin: 20px auto; border: 1px solid #D3C9B8;">
+            <h3 style="margin-top: 0; color: #1F1B16; font-family: Georgia, serif; text-align: center; font-size: 22px; margin-bottom: 25px; border-bottom: 2px solid #D3C9B8; padding-bottom: 12px; font-weight: bold;">🧭 Travel Planning Progress</h3>
+            {items_html}
+        </div>
+        """
+        self.placeholder.html(container_html)
+        
+    def animate_to(self, agent, target_val, steps=8, delay=0.02):
+        start_val = self.progress.get(agent, 0)
+        if start_val == target_val:
+            return
+        for i in range(1, steps + 1):
+            current_val = int(start_val + (target_val - start_val) * (i / steps))
+            self.progress[agent] = current_val
+            # Slowly pull planner agent up as other agents make progress
+            if agent != "Planner Agent" and self.progress["Planner Agent"] < 90:
+                self.progress["Planner Agent"] = min(90, self.progress["Planner Agent"] + 1)
+            self.update_display()
+            time.sleep(delay)
+            
+    def on_tool_start(self, serialized, input_str, **kwargs):
+        tool_name = serialized.get("name", "")
+        if "weather" in tool_name.lower():
+            self.last_agent = "Weather Agent"
+            self.animate_to("Weather Agent", 60)
+            self.animate_to("Planner Agent", 60)
+        elif "search" in tool_name.lower():
+            self.last_agent = "Flight Agent"
+            self.animate_to("Flight Agent", 60)
+            self.animate_to("Restaurant Agent", 60)
+            self.animate_to("Planner Agent", 50)
+        elif "book" in tool_name.lower():
+            self.last_agent = "Hotel Agent"
+            self.animate_to("Hotel Agent", 60)
+            self.animate_to("Planner Agent", 80)
+
+    def on_tool_end(self, output, **kwargs):
+        if self.last_agent:
+            self.animate_to(self.last_agent, 100)
+            if self.last_agent == "Flight Agent":
+                self.animate_to("Restaurant Agent", 100)
+            self.last_agent = None
+
 # Verify credentials before loading agent
 missing = [k for k in ["GOOGLE_API_KEY", "OPENWEATHERMAP_API_KEY", "TAVILY_API_KEY"] if not os.getenv(k)]
 if missing:
@@ -262,69 +348,74 @@ if st.session_state.page == "landing":
 # SCREEN 2: AGENT EXECUTION LOADER
 # ==============================================================================
 elif st.session_state.page == "executing":
-    # Multi-step progress log using st.status
     col_margin_left, col_center, col_margin_right = st.columns([1, 3, 1])
     
     with col_center:
         st.markdown(
-            f"<h2 style='text-align: center; color: {TEXT_COLOR}; font-family: Georgia, serif; margin-top: 50px;'>Crafting Your Journey...</h2>",
+            f"<h2 style='text-align: center; color: {TEXT_COLOR}; font-family: Georgia, serif; margin-top: 30px;'>Crafting Your Journey...</h2>",
             unsafe_allow_html=True
         )
         
-        with st.status("🧙‍♂️ TravelGenie is gathering resources...", expanded=True) as status:
-            # Step 1: Geolocation Coordinates
-            status.update(label="🌍 Resolving destination coordinates...", state="running")
-            coords = get_coordinates(st.session_state.destination)
-            if coords:
-                st.session_state.coords = coords
-                st.write(f"📍 Location identified: {coords[0]:.4f}, {coords[1]:.4f}")
-            else:
-                st.write("📍 Destination coordinates not found, using generic search query.")
+        # Container for the live progress dashboard
+        progress_container = st.empty()
+        handler = ProgressCallbackHandler(progress_container)
+        
+        # Step 1: Geolocation Coordinates
+        coords = get_coordinates(st.session_state.destination)
+        if coords:
+            st.session_state.coords = coords
+            handler.progress["Maps Agent"] = 100
+            handler.progress["Planner Agent"] = 40
+            handler.update_display()
+        else:
+            handler.progress["Maps Agent"] = 100
+            handler.update_display()
 
-            # Step 2: Build Query & Run Agent Executor
-            status.update(label="🔍 Calling APIs (Tavily search, OpenWeatherMap forecast, Mock Booking)...", state="running")
-            duration = (st.session_state.end_date - st.session_state.start_date).days + 1
-            
-            query = f"Plan a trip to {st.session_state.destination}."
-            query += f" Dates: from {st.session_state.start_date} to {st.session_state.end_date} ({duration} days)."
-            query += f" Budget: ${st.session_state.budget}/day."
-            if st.session_state.interests:
-                query += f" Interests: {', '.join(st.session_state.interests)}."
+        # Step 2: Build Query & Run Agent Executor
+        duration = (st.session_state.end_date - st.session_state.start_date).days + 1
+        
+        query = f"Plan a trip to {st.session_state.destination}."
+        query += f" Dates: from {st.session_state.start_date} to {st.session_state.end_date} ({duration} days)."
+        query += f" Budget: ${st.session_state.budget}/day."
+        if st.session_state.interests:
+            query += f" Interests: {', '.join(st.session_state.interests)}."
 
-            # Execute Langchain Agent Workflow
-            try:
-                result = st.session_state.executor.invoke({
-                    "input": query,
-                    "chat_history": []
-                })
-                output_text = extract_text_output(result["output"])
-                
-                # Step 3: Parse Sections
-                status.update(label="✨ Separating and formatting dashboard components...", state="running")
-                st.session_state.raw_response = output_text
-                st.session_state.sections = parse_sections(output_text)
-                
-                # Initialize conversational history for refinement chat
-                st.session_state.chat_history = [
-                    HumanMessage(content=query),
-                    AIMessage(content=output_text)
-                ]
-                st.session_state.display_history = [
-                    ("user", query),
-                    ("assistant", output_text)
-                ]
-                
-                status.update(label="Trip generated successfully!", state="complete", expanded=False)
-                st.session_state.page = "dashboard"
-            except Exception as e:
-                status.update(label="❌ Failed to generate itinerary", state="error")
-                st.error(f"The Gemini AI model is currently unavailable or experiencing high demand: {e}. Please wait a moment and try again.")
-                if st.button("⬅️ Back to Search"):
-                    st.session_state.page = "landing"
-                    st.rerun()
-                st.stop()
+        # Execute Langchain Agent Workflow with Callbacks
+        try:
+            result = st.session_state.executor.invoke({
+                "input": query,
+                "chat_history": []
+            }, config={"callbacks": [handler]})
+            output_text = extract_text_output(result["output"])
             
-        st.rerun()
+            # Step 3: Parse Sections
+            st.session_state.raw_response = output_text
+            st.session_state.sections = parse_sections(output_text)
+            
+            # Initialize conversational history for refinement chat
+            st.session_state.chat_history = [
+                HumanMessage(content=query),
+                AIMessage(content=output_text)
+            ]
+            st.session_state.display_history = [
+                ("user", query),
+                ("assistant", output_text)
+            ]
+            
+            # Finalize progress bar dashboard with smooth scroll to 100
+            for k in handler.progress:
+                handler.animate_to(k, 100, steps=8, delay=0.01)
+            time.sleep(0.5) # Allow user to see completed state briefly
+            
+            st.session_state.page = "dashboard"
+            st.rerun()
+            
+        except Exception as e:
+            st.error(f"The Gemini AI model is currently unavailable or experiencing high demand: {e}. Please wait a moment and try again.")
+            if st.button("⬅️ Back to Search"):
+                st.session_state.page = "landing"
+                st.rerun()
+            st.stop()
 
 # ==============================================================================
 # SCREEN 3: DASHBOARD VIEW
@@ -360,7 +451,7 @@ elif st.session_state.page == "dashboard":
         st.markdown("### Actions")
         
         # Reset Page state
-        if st.button("🔄 Plan Another Trip", use_container_width=True):
+        if st.button("🔄 Plan Another Trip", width="stretch"):
             st.session_state.page = "landing"
             st.session_state.chat_history = []
             st.session_state.display_history = []
@@ -383,7 +474,7 @@ Interests: {", ".join(st.session_state.interests)}
             data=export_text,
             file_name=f"itinerary_{st.session_state.destination.lower().replace(' ', '_')}.md",
             mime="text/markdown",
-            use_container_width=True
+            width="stretch"
         )
         
         st.info("💡 You can refine this itinerary using the AI Assistant chat tab on the right side of the dashboard.")
@@ -441,7 +532,7 @@ Interests: {", ".join(st.session_state.interests)}
         if st.session_state.coords:
             lat, lon = st.session_state.coords
             df = pd.DataFrame({"lat": [lat], "lon": [lon]})
-            st.map(df, zoom=11, use_container_width=True)
+            st.map(df, zoom=11, width="stretch")
         else:
             st.warning("⚠️ Map coordinates could not be loaded dynamically. Displaying itinerary below.")
 
