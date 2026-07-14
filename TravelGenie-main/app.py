@@ -11,6 +11,7 @@ from agent.agent import build_agent_executor
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.callbacks import BaseCallbackHandler
 import time
+from fpdf import FPDF
 
 # Load environment variables
 load_dotenv()
@@ -256,6 +257,63 @@ class ProgressCallbackHandler(BaseCallbackHandler):
                 self.animate_to("Restaurant Agent", 100)
             self.last_agent = None
 
+# Custom FPDF PDF generator class to format PDF output
+class ItineraryPDF(FPDF):
+    def header(self):
+        self.set_font('helvetica', 'B', 15)
+        self.cell(0, 10, 'TravelGenie Itinerary', align='C', new_x="LMARGIN", new_y="NEXT")
+        self.ln(5)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font('helvetica', 'I', 8)
+        self.cell(0, 10, f'Page {self.page_no()}/{{nb}}', align='C')
+
+def generate_pdf(destination, start_date, end_date, budget, raw_text) -> bytes:
+    replacements = {
+        '\u2018': "'", '\u2019': "'",
+        '\u201c': '"', '\u201d': '"',
+        '\u2013': '-', '\u2014': '-',
+        '\u2022': '*',
+        '\u2212': '-',
+    }
+    cleaned = raw_text
+    for orig, repl in replacements.items():
+        cleaned = cleaned.replace(orig, repl)
+        
+    clean_text = cleaned.encode('latin-1', 'ignore').decode('latin-1')
+    
+    pdf = ItineraryPDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    
+    # Metadata Title Card
+    pdf.set_font("helvetica", 'B', 12)
+    pdf.cell(0, 8, f"Destination: {destination}", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 8, f"Dates: {start_date} to {end_date}", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 8, f"Budget: ${budget}/day", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(8)
+    
+    pdf.set_font("helvetica", size=10)
+    for line in clean_text.split('\n'):
+        if not line.strip():
+            pdf.ln(4)
+            continue
+        if line.startswith('## '):
+            pdf.ln(4)
+            pdf.set_font("helvetica", 'B', 12)
+            pdf.multi_cell(pdf.epw, 6, line.replace('##', '').strip(), new_x="LMARGIN", new_y="NEXT")
+            pdf.set_font("helvetica", size=10)
+        elif line.startswith('### '):
+            pdf.ln(2)
+            pdf.set_font("helvetica", 'B', 11)
+            pdf.multi_cell(pdf.epw, 6, line.replace('###', '').strip(), new_x="LMARGIN", new_y="NEXT")
+            pdf.set_font("helvetica", size=10)
+        else:
+            pdf.multi_cell(pdf.epw, 5, line, new_x="LMARGIN", new_y="NEXT")
+            
+    return bytes(pdf.output())
+
 # Verify credentials before loading agent
 missing = [k for k in ["GOOGLE_API_KEY", "OPENWEATHERMAP_API_KEY", "TAVILY_API_KEY"] if not os.getenv(k)]
 if missing:
@@ -469,13 +527,31 @@ Interests: {", ".join(st.session_state.interests)}
 
 {st.session_state.raw_response}
 """
-        st.download_button(
-            label="📥 Download Itinerary (MD)",
-            data=export_text,
-            file_name=f"itinerary_{st.session_state.destination.lower().replace(' ', '_')}.md",
-            mime="text/markdown",
-            width="stretch"
-        )
+        # Generate PDF stream
+        try:
+            pdf_bytes = generate_pdf(
+                destination=st.session_state.destination,
+                start_date=st.session_state.start_date,
+                end_date=st.session_state.end_date,
+                budget=st.session_state.budget,
+                raw_text=st.session_state.raw_response
+            )
+            st.download_button(
+                label="📥 Download Itinerary (PDF)",
+                data=pdf_bytes,
+                file_name=f"itinerary_{st.session_state.destination.lower().replace(' ', '_')}.pdf",
+                mime="application/pdf",
+                width="stretch"
+            )
+        except Exception as pdf_err:
+            st.warning(f"PDF creation warning: {pdf_err}. Falling back to markdown download.")
+            st.download_button(
+                label="📥 Download Itinerary (MD)",
+                data=export_text,
+                file_name=f"itinerary_{st.session_state.destination.lower().replace(' ', '_')}.md",
+                mime="text/markdown",
+                width="stretch"
+            )
         
         st.info("💡 You can refine this itinerary using the AI Assistant chat tab on the right side of the dashboard.")
 

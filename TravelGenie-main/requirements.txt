@@ -5,3 +5,4 @@ langchain-tavily>=0.1
 requests>=2.32
 python-dotenv>=1.0
 langchain-classic
+fpdf2>=2.8.7
