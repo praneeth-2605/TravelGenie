@@ -1,4 +1,4 @@
-# 🌍 TravelGenie - AI Travel Itinerary Planner
+ 🌍 TravelGenie - AI Travel Itinerary Planner
 
 TravelGenie is an AI-powered travel planning application that creates personalized travel itineraries based on user preferences such as destination, budget, trip duration, travel style, and interests. The application simplifies travel planning by generating intelligent, day-wise itineraries in seconds.
 
