@@ -1,7 +1,7 @@
 import os
 from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_openai import ChatOpenAI
 from agent.tools import get_all_tools
 
 SYSTEM_PROMPT = """You are TravelGenie, an expert trip-planning agent.stst
@@ -19,13 +19,18 @@ SYSTEM_PROMPT = """You are TravelGenie, an expert trip-planning agent.stst
 Use markdown, structure by Day 1 / Day 2 / ..., morning/afternoon/evening.
 """
 
-def build_agent_executor(google_api_key: str | None = None) -> AgentExecutor:
-    api_key = google_api_key or os.getenv("GOOGLE_API_KEY")
+def build_agent_executor(xai_api_key: str | None = None) -> AgentExecutor:
+    api_key = xai_api_key or os.getenv("XAI_API_KEY")
     if not api_key:
-        raise ValueError("GOOGLE_API_KEY is not set.")
+        raise ValueError("XAI_API_KEY is not set.")
 
-    llm = ChatGoogleGenerativeAI(model="gemini-3.5-flash", google_api_key=api_key,
-                              temperature=0.4, max_output_tokens=4000)
+    llm = ChatOpenAI(
+        model=os.getenv("GROK_MODEL", "grok-4.5"),
+        api_key=api_key,
+        base_url="https://api.x.ai/v1",
+        temperature=0.4,
+        max_tokens=4000,
+    )
     tools = get_all_tools()
     prompt = ChatPromptTemplate.from_messages([
         ("system", SYSTEM_PROMPT),

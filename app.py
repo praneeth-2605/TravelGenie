@@ -22,7 +22,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-missing = [k for k in ["GOOGLE_API_KEY", "OPENWEATHERMAP_API_KEY", "TAVILY_API_KEY"] if not os.getenv(k)]
+missing = [k for k in ["XAI_API_KEY", "OPENWEATHERMAP_API_KEY", "TAVILY_API_KEY"] if not os.getenv(k)]
 if missing:
     st.warning(f"Missing environment variables: {', '.join(missing)}. Add them to your .env file.")
     st.stop()
