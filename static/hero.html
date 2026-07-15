@@ -1,79 +1,245 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<meta charset="utf-8" />
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>TravelGenie</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:wght@400;600&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/lucide@latest"></script>
 <style>
-  html, body { margin:0; padding:0; background: transparent; overflow:hidden; }
-  #hero { position: relative; width: 100%; height: 420px; }
-  #label {
-    position:absolute; top:24px; left:32px;
-    font-family: Georgia, serif; font-size: 15px; letter-spacing: 0.08em;
-    text-transform: uppercase; color: #8A6F5C; font-weight: 500;
+  body { font-family: 'Inter', sans-serif; margin:0; }
+  .font-display { font-family: 'Fraunces', serif; }
+  .hero-bg {
+    background: linear-gradient(180deg, #F6E7C7 0%, #E8B98A 30%, #C97B5A 55%, #2A211C 100%);
   }
+  .photo-ph {
+    background: linear-gradient(135deg, #7F77DD 0%, #D85A30 100%);
+  }
+  .dark-section { background: #14120F; }
+  .timeline-line { background: rgba(244,241,234,0.25); }
 </style>
 </head>
-<body>
-<div id="hero"><div id="label">Wandering the globe, one itinerary at a time</div></div>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<body class="bg-[#14120F]">
+
+<div class="p-3 md:p-5" style="background:#14120F;">
+
+  <!-- HERO -->
+  <div class="relative hero-bg rounded-2xl overflow-hidden min-h-[640px] flex flex-col">
+
+    <!-- NAV -->
+    <nav class="relative z-10 px-6 md:px-10 py-6 flex items-center justify-between">
+      <div class="flex items-center gap-2 text-white">
+        <i data-lucide="compass" class="w-5 h-5"></i>
+        <span class="text-sm font-semibold tracking-wide">TRAVELGENIE</span>
+      </div>
+      <div class="hidden md:flex items-center gap-8 text-sm text-white/90">
+        <a href="#how-it-works" class="hover:text-white">How it works</a>
+        <a href="#included" class="hover:text-white">Tools</a>
+        <a href="#cta" class="hover:text-white">Contact</a>
+      </div>
+      <button class="border border-white/60 text-white text-sm px-5 py-2 rounded-full hover:bg-white/10 transition-colors"
+        onclick="window.parent.document.getElementById('chat-anchor')?.scrollIntoView({behavior:'smooth'})">
+        Plan trip
+      </button>
+    </nav>
+
+    <!-- TITLE -->
+    <div class="relative z-10 px-6 md:px-10 mt-4 md:mt-10">
+      <h1 id="hero-title" class="font-display text-white leading-[0.85] tracking-tight whitespace-nowrap" style="font-size:64px;">
+        TRAVELGENIE
+      </h1>
+    </div>
+
+    <!-- PHOTO STRIP -->
+    <div class="relative z-10 px-6 md:px-10 mt-6 flex gap-3 overflow-x-auto">
+      <div class="photo-ph rounded-xl w-24 h-32 md:w-28 md:h-36 flex-shrink-0 flex items-end p-2">
+        <span class="text-white text-xs font-medium">any<br/>destination</span>
+      </div>
+      <div class="photo-ph rounded-xl w-24 h-32 md:w-28 md:h-36 flex-shrink-0 flex items-end p-2" style="background:linear-gradient(135deg,#1D9E75,#0F6E56);">
+        <span class="text-white text-xs font-medium">live weather<br/>data</span>
+      </div>
+      <div class="photo-ph rounded-xl w-24 h-32 md:w-28 md:h-36 flex-shrink-0 flex items-end p-2" style="background:linear-gradient(135deg,#D4537E,#993556);">
+        <span class="text-white text-xs font-medium">real-time<br/>search</span>
+      </div>
+      <div class="photo-ph rounded-xl w-24 h-32 md:w-28 md:h-36 flex-shrink-0 flex items-end p-2" style="background:linear-gradient(135deg,#378ADD,#185FA5);">
+        <span class="text-white text-xs font-medium">day-by-day<br/>itinerary</span>
+      </div>
+      <div class="photo-ph rounded-xl w-24 h-32 md:w-28 md:h-36 flex-shrink-0 flex items-end p-2" style="background:linear-gradient(135deg,#EF9F27,#854F0B);">
+        <span class="text-white text-xs font-medium">packing &amp;<br/>advisory</span>
+      </div>
+    </div>
+
+    <!-- BOOK / CTA -->
+    <div class="relative z-10 mt-auto px-6 md:px-10 pb-10 flex justify-end">
+      <button class="bg-white text-black text-sm font-medium px-8 py-3 rounded-full hover:bg-white/90 transition-colors"
+        onclick="window.parent.document.getElementById('chat-anchor')?.scrollIntoView({behavior:'smooth'})">
+        Plan my trip
+      </button>
+    </div>
+  </div>
+
+  <!-- HOW IT WORKS -->
+  <div id="how-it-works" class="dark-section rounded-2xl mt-3 md:mt-5 px-6 md:px-16 py-16 md:py-20">
+    <div class="flex items-center gap-4 mb-12">
+      <h2 class="font-display text-white text-3xl md:text-4xl tracking-wide">HOW IT WORKS</h2>
+      <div class="flex-1 h-px bg-white/20"></div>
+    </div>
+
+    <div class="grid md:grid-cols-2 gap-10 mb-16">
+      <p class="text-white/70 text-sm leading-relaxed">
+        Tell TravelGenie your destination, dates, and budget. It chains together a
+        <span class="text-[#E8B98A]">weather tool</span>, a
+        <span class="text-[#E8B98A]">live search tool</span>, and a
+        <span class="text-[#E8B98A]">mock booking tool</span> to draft a full itinerary in one pass.
+      </p>
+      <p class="text-white/70 text-sm leading-relaxed">
+        No need to juggle tabs for forecasts, attractions, and prices — TravelGenie pulls it all
+        together, then <span class="text-[#E8B98A]">revises the plan live</span> as you refine budget,
+        pace, or interests in the chat below.
+      </p>
+    </div>
+
+    <!-- TIMELINE -->
+    <div class="relative pl-8">
+      <div class="absolute left-0 top-2 bottom-2 w-px timeline-line"></div>
+
+      <div class="relative mb-12 flex items-start gap-6">
+        <div class="absolute -left-8 top-1.5 w-2.5 h-2.5 rounded-full bg-[#E8B98A]"></div>
+        <div class="w-40 flex-shrink-0">
+          <p class="text-white/50 text-xs uppercase tracking-wide">Step 1</p>
+          <p class="text-white font-medium">Weather + search</p>
+        </div>
+        <div class="photo-ph rounded-lg w-20 h-16" style="background:linear-gradient(135deg,#1D9E75,#0F6E56);"></div>
+      </div>
+
+      <div class="relative mb-12 flex items-start gap-6">
+        <div class="absolute -left-8 top-1.5 w-2.5 h-2.5 rounded-full bg-[#E8B98A]"></div>
+        <div class="w-40 flex-shrink-0">
+          <p class="text-white/50 text-xs uppercase tracking-wide">Step 2</p>
+          <p class="text-white font-medium">Draft itinerary</p>
+        </div>
+        <div class="photo-ph rounded-lg w-20 h-16" style="background:linear-gradient(135deg,#378ADD,#185FA5);"></div>
+      </div>
+
+      <div class="relative flex items-start gap-6">
+        <div class="absolute -left-8 top-1.5 w-2.5 h-2.5 rounded-full bg-[#E8B98A]"></div>
+        <div class="w-40 flex-shrink-0">
+          <p class="text-white/50 text-xs uppercase tracking-wide">Step 3</p>
+          <p class="text-white font-medium">Refine &amp; simulate booking</p>
+        </div>
+        <div class="photo-ph rounded-lg w-20 h-16" style="background:linear-gradient(135deg,#D4537E,#993556);"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- WHAT'S INCLUDED -->
+  <div id="included" class="dark-section rounded-2xl mt-3 md:mt-5 px-6 md:px-16 py-16 md:py-20">
+    <div class="flex items-center gap-4 mb-12">
+      <h2 class="font-display text-white text-3xl md:text-4xl tracking-wide">TOOLS INCLUDED</h2>
+      <div class="flex-1 h-px bg-white/20"></div>
+    </div>
+
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="border border-white/15 rounded-xl p-5">
+        <i data-lucide="cloud-sun" class="w-6 h-6 text-[#E8B98A] mb-3"></i>
+        <p class="text-white font-medium mb-1">Weather</p>
+        <p class="text-white/50 text-xs leading-relaxed">Live forecasts ground packing tips and timing for every day.</p>
+      </div>
+      <div class="border border-white/15 rounded-xl p-5">
+        <i data-lucide="search" class="w-6 h-6 text-[#E8B98A] mb-3"></i>
+        <p class="text-white font-medium mb-1">Search</p>
+        <p class="text-white/50 text-xs leading-relaxed">Current attractions, neighborhoods, and local events.</p>
+      </div>
+      <div class="border border-white/15 rounded-xl p-5">
+        <i data-lucide="ticket" class="w-6 h-6 text-[#E8B98A] mb-3"></i>
+        <p class="text-white font-medium mb-1">Booking</p>
+        <p class="text-white/50 text-xs leading-relaxed">A simulated hotel and activity lock-in, clearly marked mock.</p>
+      </div>
+      <div class="border border-white/15 rounded-xl p-5">
+        <i data-lucide="backpack" class="w-6 h-6 text-[#E8B98A] mb-3"></i>
+        <p class="text-white font-medium mb-1">Packing list</p>
+        <p class="text-white/50 text-xs leading-relaxed">Season-specific packing and a weather advisory, every trip.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- CTA -->
+  <div id="cta" class="relative rounded-2xl mt-3 md:mt-5 overflow-hidden min-h-[420px] flex items-end" style="background: linear-gradient(180deg, #3A2E24 0%, #1B140F 100%);">
+    <div class="p-6 md:p-10 w-full">
+      <div class="bg-black/40 backdrop-blur-sm rounded-xl p-6 md:p-8 max-w-md">
+        <h3 class="text-white text-xl font-medium mb-1">Ready to plan your trip?</h3>
+        <p class="text-white/60 text-sm mb-6">Tell the agent where and when — it takes it from there.</p>
+        <p class="text-white/50 text-xs uppercase tracking-wide mb-2">Try it below</p>
+        <div class="flex gap-2">
+          <input type="text" id="cta-input" placeholder="e.g. 5 days in Lisbon, $150/day"
+            class="flex-1 bg-white/10 border border-white/20 rounded-full px-4 py-2.5 text-sm text-white placeholder-white/40" />
+          <button class="bg-white text-black text-sm font-medium px-5 py-2.5 rounded-full flex-shrink-0"
+            onclick="sendToChat()">
+            Start
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <footer class="px-6 md:px-10 py-8 flex flex-col md:flex-row items-center justify-between gap-4 text-white/60 text-sm">
+    <div class="flex items-center gap-2 text-white">
+      <i data-lucide="compass" class="w-4 h-4"></i>
+      <span class="font-semibold tracking-wide text-xs">TRAVELGENIE</span>
+    </div>
+    <div class="flex items-center gap-6">
+      <a href="#how-it-works" class="hover:text-white">How it works</a>
+      <a href="#included" class="hover:text-white">Tools</a>
+      <a href="#cta" class="hover:text-white">Contact</a>
+    </div>
+    <button class="border border-white/30 px-5 py-2 rounded-full text-xs hover:bg-white/10 transition-colors"
+      onclick="window.parent.document.getElementById('chat-anchor')?.scrollIntoView({behavior:'smooth'})">
+      Plan trip
+    </button>
+  </footer>
+
+</div>
+
 <script>
-const container = document.getElementById('hero');
-const width = container.clientWidth || 800, height = 420;
-const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(45, width/height, 0.1, 1000);
-camera.position.set(0, 0.4, 5.4);
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-renderer.setSize(width, height);
-container.appendChild(renderer.domElement);
+  lucide.createIcons();
 
-const globe = new THREE.Mesh(
-  new THREE.SphereGeometry(1.8, 28, 20),
-  new THREE.MeshBasicMaterial({ color: 0xD97757, wireframe: true, transparent: true, opacity: 0.55 })
-);
-scene.add(globe);
-scene.add(new THREE.Mesh(
-  new THREE.SphereGeometry(1.78, 24, 18),
-  new THREE.MeshBasicMaterial({ color: 0xF4F1EA, transparent: true, opacity: 0.85 })
-));
+  function fitTitle() {
+    const el = document.getElementById('hero-title');
+    if (!el) return;
+    const container = el.parentElement;
+    const width = container.clientWidth;
+    const text = el.textContent.trim();
+    let size = width / (text.length * 0.62);
+    size = Math.max(32, Math.min(140, size));
+    el.style.fontSize = size + 'px';
+  }
+  fitTitle();
+  window.addEventListener('load', fitTitle);
+  window.addEventListener('resize', fitTitle);
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(fitTitle);
+  }
 
-function latLonToVec3(lat, lon, r) {
-  const phi = (90 - lat) * Math.PI/180, theta = (lon + 180) * Math.PI/180;
-  return new THREE.Vector3(-r*Math.sin(phi)*Math.cos(theta), r*Math.cos(phi), r*Math.sin(phi)*Math.sin(theta));
-}
-const pinCoords = [[35.68,139.69],[41.0,28.98],[-33.87,151.21],[40.71,-74.0],[-13.16,-72.55]];
-const pinGroup = new THREE.Group();
-const pinMat = new THREE.MeshBasicMaterial({ color: 0xB85C38 });
-pinCoords.forEach(([lat,lon]) => {
-  const pin = new THREE.Mesh(new THREE.SphereGeometry(0.045,10,10), pinMat);
-  pin.position.copy(latLonToVec3(lat,lon,1.83));
-  pinGroup.add(pin);
-});
-scene.add(pinGroup);
+  function sendToChat() {
+    const inputEl = document.getElementById('cta-input');
+    const value = inputEl ? inputEl.value.trim() : '';
 
-function makeArc(a,b){
-  const start=latLonToVec3(a[0],a[1],1.83), end=latLonToVec3(b[0],b[1],1.83);
-  const mid=start.clone().add(end).multiplyScalar(0.5).normalize().multiplyScalar(2.35);
-  const pts=new THREE.QuadraticBezierCurve3(start,mid,end).getPoints(40);
-  const geo=new THREE.BufferGeometry().setFromPoints(pts);
-  const mat=new THREE.LineDashedMaterial({color:0xD97757,dashSize:0.06,gapSize:0.05,transparent:true,opacity:0.8});
-  const line=new THREE.Line(geo,mat); line.computeLineDistances(); return line;
-}
-scene.add(makeArc(pinCoords[0],pinCoords[3]));
-scene.add(makeArc(pinCoords[1],pinCoords[2]));
-scene.add(makeArc(pinCoords[3],pinCoords[4]));
+    const anchor = window.parent.document.getElementById('chat-anchor');
+    if (anchor) anchor.scrollIntoView({ behavior: 'smooth' });
 
-function animate(){
-  requestAnimationFrame(animate);
-  globe.rotation.y += 0.0028;
-  pinGroup.rotation.y += 0.0028;
-  scene.children.forEach(c => { if (c.isLine) c.rotation.y += 0.0028; });
-  renderer.render(scene, camera);
-}
-animate();
-window.addEventListener('resize', () => {
-  const w = container.clientWidth || 800;
-  camera.aspect = w/height; camera.updateProjectionMatrix();
-  renderer.setSize(w, height);
-});
+    const textarea = window.parent.document.querySelector('[data-testid="stChatInput"] textarea');
+    if (textarea && value) {
+      const setter = Object.getOwnPropertyDescriptor(window.parent.HTMLTextAreaElement.prototype, 'value').set;
+      setter.call(textarea, value);
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      setTimeout(() => textarea.focus(), 400);
+    }
+  }
 </script>
+
 </body>
 </html>

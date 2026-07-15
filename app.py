@@ -10,17 +10,25 @@ from langchain_core.messages import HumanMessage, AIMessage
 
 load_dotenv()
 
+def extract_text(output) -> str:
+    """Some models (e.g. Gemini) return output as a list of content blocks
+    instead of a plain string. Pull out just the readable text."""
+    if isinstance(output, str):
+        return output
+    if isinstance(output, list):
+        parts = []
+        for block in output:
+            if isinstance(block, dict) and block.get("type") == "text":
+                parts.append(block.get("text", ""))
+            elif isinstance(block, str):
+                parts.append(block)
+        return "\n".join(parts).strip()
+    return str(output)
+
 st.set_page_config(page_title="TravelGenie", page_icon="🧭", layout="centered")
 
 hero_html = Path("static/hero.html").read_text()
-components.html(hero_html, height=430)
-
-st.markdown(
-    "<h1 style='font-family:Georgia,serif;color:#1F1B16;'>TravelGenie</h1>"
-    "<p style='color:#5c5647;'>Tell me where you're headed, your dates, and your budget — "
-    "I'll chain weather, search, and booking tools into a day-by-day plan you can refine.</p>",
-    unsafe_allow_html=True,
-)
+components.html(hero_html, height=2400)
 
 missing = [k for k in ["GOOGLE_API_KEY", "OPENWEATHERMAP_API_KEY", "TAVILY_API_KEY"] if not os.getenv(k)]
 if missing:
@@ -33,6 +41,8 @@ if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 if "display_history" not in st.session_state:
     st.session_state.display_history = []
+
+st.markdown('<div id="chat-anchor"></div>', unsafe_allow_html=True)
 
 for role, text in st.session_state.display_history:
     with st.chat_message(role):
@@ -50,7 +60,7 @@ if user_input:
                 "input": user_input,
                 "chat_history": st.session_state.chat_history,
             })
-            answer = result["output"]
+            answer = extract_text(result["output"])
             st.markdown(answer)
 
     st.session_state.chat_history.append(HumanMessage(content=user_input))
