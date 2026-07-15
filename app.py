@@ -11,8 +11,8 @@ from langchain_core.messages import HumanMessage, AIMessage
 load_dotenv()
 
 def extract_text(output) -> str:
-    """Some models (e.g. Gemini) return output as a list of content blocks
-    instead of a plain string. Pull out just the readable text."""
+    """Some models return output as a list of content blocks instead of a
+    plain string. Pull out just the readable text."""
     if isinstance(output, str):
         return output
     if isinstance(output, list):

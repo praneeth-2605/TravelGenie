@@ -4,7 +4,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
 from agent.tools import get_all_tools
 
-SYSTEM_PROMPT = """You are TravelGenie, an expert trip-planning agent.stst
+SYSTEM_PROMPT = """You are TravelGenie, an expert trip-planning agent.
 
 1. Produce a DAY-BY-DAY itinerary for the destination and dates given.
    Use the search tool for real, current attractions/neighborhoods, and the
