@@ -27,10 +27,21 @@ def extract_text(output) -> str:
 
 st.set_page_config(page_title="TravelGenie", page_icon="🧭", layout="centered")
 
-hero_html = Path("static/hero.html").read_text()
-components.html(hero_html, height=2400)
+st.markdown("""
+<style>
+  .stApp { background: #0b0e12; }
+  [data-testid="stHeader"] { height: 0; background: transparent; }
+  [data-testid="stToolbar"], #MainMenu, footer { display: none; }
+  .block-container { max-width: 1180px; padding-top: .5rem; padding-bottom: 7rem; }
+  [data-testid="stChatMessage"] { border: 1px solid rgba(255,255,255,.09); border-radius: 18px; padding: 1rem 1.15rem; background: #121820; }
+  [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) { background: #1c2938; }
+</style>
+""", unsafe_allow_html=True)
 
-missing = [k for k in ["XAI_API_KEY", "OPENWEATHERMAP_API_KEY", "TAVILY_API_KEY"] if not os.getenv(k)]
+hero_html = Path("static/hero.html").read_text(encoding="utf-8")
+components.html(hero_html, height=1780)
+
+missing = [k for k in ["GROQ_API_KEY", "OPENWEATHERMAP_API_KEY", "TAVILY_API_KEY"] if not os.getenv(k)]
 if missing:
     st.warning(f"Missing environment variables: {', '.join(missing)}. Add them to your .env file.")
     st.stop()
@@ -41,14 +52,13 @@ if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 if "display_history" not in st.session_state:
     st.session_state.display_history = []
-
 st.markdown('<div id="chat-anchor"></div>', unsafe_allow_html=True)
 
 for role, text in st.session_state.display_history:
     with st.chat_message(role):
         st.markdown(text)
 
-user_input = st.chat_input("e.g. Plan 5 days in Lisbon in October, budget $150/day")
+user_input = st.chat_input("Where do you want to go? Add dates, budget, and travel style.")
 if user_input:
     st.session_state.display_history.append(("user", user_input))
     with st.chat_message("user"):

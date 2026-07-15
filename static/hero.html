@@ -1,245 +1,64 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>TravelGenie</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:wght@400;600&display=swap" rel="stylesheet">
-<script src="https://cdn.tailwindcss.com"></script>
-<script src="https://unpkg.com/lucide@latest"></script>
-<style>
-  body { font-family: 'Inter', sans-serif; margin:0; }
-  .font-display { font-family: 'Fraunces', serif; }
-  .hero-bg {
-    background: linear-gradient(180deg, #F6E7C7 0%, #E8B98A 30%, #C97B5A 55%, #2A211C 100%);
-  }
-  .photo-ph {
-    background: linear-gradient(135deg, #7F77DD 0%, #D85A30 100%);
-  }
-  .dark-section { background: #14120F; }
-  .timeline-line { background: rgba(244,241,234,0.25); }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,500&display=swap" rel="stylesheet">
+  <style>
+    :root { --ink:#10151b; --night:#10151b; --paper:#f6f1e8; --sand:#e8bd81; --mist:#bdc7ce; }
+    * { box-sizing:border-box; } html { scroll-behavior:smooth; }
+    body { margin:0; background:var(--night); color:var(--paper); font-family:"DM Sans",sans-serif; }
+    .shell { max-width:1180px; margin:auto; padding:14px; overflow:hidden; }
+    .hero { position:relative; min-height:680px; overflow:hidden; border-radius:26px; background:#4c6257; isolation:isolate; }
+    .hero:before { content:""; position:absolute; inset:0; z-index:-2; background:linear-gradient(90deg,rgba(10,19,19,.93) 1%,rgba(12,22,21,.62) 47%,rgba(5,12,12,.12)),url("https://images.unsplash.com/photo-1469474968028-56623f02e42e?auto=format&fit=crop&w=1800&q=85") center/cover; }
+    .hero:after { content:""; position:absolute; z-index:-1; inset:auto -8% -36% 32%; height:460px; border-radius:50%; background:rgba(235,193,125,.23); filter:blur(42px); }
+    nav { display:flex; align-items:center; justify-content:space-between; gap:18px; padding:26px 30px; }
+    .brand { display:flex; align-items:center; gap:9px; font-size:.78rem; font-weight:700; letter-spacing:.14em; }
+    .brand-mark { display:grid; place-items:center; width:27px; height:27px; border:1px solid rgba(255,255,255,.65); border-radius:50%; color:var(--sand); font-size:1rem; }
+    .navlinks { display:flex; gap:26px; } .navlinks a { color:rgba(255,255,255,.72); text-decoration:none; font-size:.85rem; }
+    .button { border:0; cursor:pointer; font:600 .82rem "DM Sans"; border-radius:999px; padding:12px 18px; transition:.2s ease; }
+    .button.light { background:var(--paper); color:var(--ink); } .button.light:hover { transform:translateY(-2px); background:#fff; }
+    .hero-content { padding:70px 8.5% 46px; max-width:780px; }
+    .eyebrow { display:flex; align-items:center; gap:9px; color:#f4d7ad; font:500 .68rem "DM Mono"; letter-spacing:.12em; text-transform:uppercase; }
+    .dot { width:7px; height:7px; border-radius:50%; background:#9de1bd; box-shadow:0 0 0 5px rgba(157,225,189,.14); }
+    h1 { margin:19px 0 17px; max-width:700px; font:600 clamp(3.25rem,8vw,6.3rem)/.92 "Playfair Display",serif; letter-spacing:-.055em; }
+    h1 em { color:#f0c989; font-weight:500; }
+    .lead { max-width:510px; color:rgba(255,255,255,.76); font-size:1.04rem; line-height:1.6; }
+    .hero-actions { display:flex; flex-wrap:wrap; align-items:center; gap:18px; margin-top:27px; }
+    .text-link { color:#fff; text-decoration:none; border-bottom:1px solid rgba(255,255,255,.55); padding-bottom:4px; font-size:.88rem; }
+    .route-card { position:absolute; right:4.5%; bottom:38px; width:300px; padding:17px; border:1px solid rgba(255,255,255,.19); border-radius:18px; background:rgba(16,21,27,.76); box-shadow:0 18px 45px rgba(0,0,0,.25); backdrop-filter:blur(10px); }
+    .route-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; } .route-head strong { font-size:.86rem; } .route-head span { color:#9de1bd; font:500 .64rem "DM Mono"; }
+    .route { display:grid; grid-template-columns:20px 1fr auto; align-items:center; gap:9px; padding:10px 0; border-top:1px solid rgba(255,255,255,.11); }
+    .route b { font-size:.8rem; } .route small { display:block; color:rgba(255,255,255,.55); margin-top:2px; font-size:.69rem; } .route time { color:#f0c989; font:500 .67rem "DM Mono"; }
+    .pin { width:11px; height:11px; border:2px solid #f0c989; border-radius:50%; position:relative; } .pin:after { content:""; position:absolute; width:1px; height:16px; background:rgba(240,201,137,.58); top:9px; left:3px; } .route:last-child .pin:after { display:none; }
+    .proof { display:flex; gap:22px; padding:19px 5% 0; font-size:.72rem; color:rgba(255,255,255,.6); } .proof b { color:var(--paper); display:block; font-size:.9rem; margin-bottom:3px; }
+    .section { margin-top:14px; padding:48px 8%; border-radius:26px; background:#171e26; } .section-label { color:var(--sand); font:500 .68rem "DM Mono"; letter-spacing:.12em; text-transform:uppercase; }
+    .section-top { display:flex; align-items:end; justify-content:space-between; gap:25px; margin-bottom:26px; } h2 { max-width:540px; margin:9px 0 0; font:600 clamp(2rem,4vw,3.2rem)/1 "Playfair Display",serif; letter-spacing:-.04em; }
+    .section-top p { max-width:310px; color:#a8b3bd; font-size:.88rem; line-height:1.55; margin:0; }
+    .trips { display:grid; grid-template-columns:1.2fr 1fr 1fr; gap:13px; }
+    .trip { min-height:240px; border:1px solid rgba(255,255,255,.1); border-radius:17px; padding:18px; display:flex; flex-direction:column; justify-content:flex-end; background:#26333a center/cover; overflow:hidden; position:relative; }
+    .trip:before { content:""; position:absolute; inset:0; background:linear-gradient(0deg,rgba(9,13,17,.82),rgba(9,13,17,.08)); } .trip > * { position:relative; }
+    .trip:first-child { background-image:url("https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?auto=format&fit=crop&w=900&q=80"); } .trip:nth-child(2) { background-image:url("https://images.unsplash.com/photo-1530789253388-582c481c54b0?auto=format&fit=crop&w=900&q=80"); } .trip:nth-child(3) { background-image:url("https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?auto=format&fit=crop&w=900&q=80"); }
+    .trip .tag { align-self:flex-start; margin-bottom:auto; border:1px solid rgba(255,255,255,.45); border-radius:999px; padding:5px 8px; background:rgba(0,0,0,.15); font:500 .62rem "DM Mono"; } .trip strong { font:600 1.35rem "Playfair Display",serif; } .trip span { color:rgba(255,255,255,.75); font-size:.76rem; margin-top:5px; }
+    .services { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-top:14px; } .service { padding:23px; border:1px solid rgba(255,255,255,.1); border-radius:17px; background:#111820; } .number { color:var(--sand); font:500 .68rem "DM Mono"; } .service h3 { margin:28px 0 7px; font-size:1rem; } .service p { margin:0; color:#9ba8b2; font-size:.8rem; line-height:1.5; }
+    .bottom-cta { margin-top:14px; padding:47px 8%; border-radius:26px; display:flex; justify-content:space-between; align-items:center; gap:30px; background:linear-gradient(105deg,#e8bd81,#c58d58); color:#17130f; } .bottom-cta h2 { max-width:530px; } .bottom-cta p { max-width:480px; margin:9px 0 0; line-height:1.5; font-size:.9rem; } .button.dark { flex-shrink:0; background:#161c22; color:#fff; }
+    footer { display:flex; justify-content:space-between; gap:20px; padding:27px 12px 8px; color:#83909a; font-size:.72rem; } footer strong { color:#e8edf0; letter-spacing:.1em; }
+    @media (max-width:720px) { .shell { padding:8px; } .hero { min-height:700px; border-radius:20px; } nav { padding:20px; } .navlinks { display:none; } .hero-content { padding:64px 25px 25px; } h1 { font-size:3.6rem; } .route-card { left:20px; right:20px; width:auto; bottom:23px; } .proof { display:none; } .section { border-radius:20px; padding:38px 24px; } .section-top,.bottom-cta { align-items:flex-start; flex-direction:column; } .trips,.services { grid-template-columns:1fr; } .trip { min-height:190px; } .bottom-cta { border-radius:20px; } footer { flex-direction:column; } }
+  </style>
 </head>
-<body class="bg-[#14120F]">
-
-<div class="p-3 md:p-5" style="background:#14120F;">
-
-  <!-- HERO -->
-  <div class="relative hero-bg rounded-2xl overflow-hidden min-h-[640px] flex flex-col">
-
-    <!-- NAV -->
-    <nav class="relative z-10 px-6 md:px-10 py-6 flex items-center justify-between">
-      <div class="flex items-center gap-2 text-white">
-        <i data-lucide="compass" class="w-5 h-5"></i>
-        <span class="text-sm font-semibold tracking-wide">TRAVELGENIE</span>
-      </div>
-      <div class="hidden md:flex items-center gap-8 text-sm text-white/90">
-        <a href="#how-it-works" class="hover:text-white">How it works</a>
-        <a href="#included" class="hover:text-white">Tools</a>
-        <a href="#cta" class="hover:text-white">Contact</a>
-      </div>
-      <button class="border border-white/60 text-white text-sm px-5 py-2 rounded-full hover:bg-white/10 transition-colors"
-        onclick="window.parent.document.getElementById('chat-anchor')?.scrollIntoView({behavior:'smooth'})">
-        Plan trip
-      </button>
-    </nav>
-
-    <!-- TITLE -->
-    <div class="relative z-10 px-6 md:px-10 mt-4 md:mt-10">
-      <h1 id="hero-title" class="font-display text-white leading-[0.85] tracking-tight whitespace-nowrap" style="font-size:64px;">
-        TRAVELGENIE
-      </h1>
-    </div>
-
-    <!-- PHOTO STRIP -->
-    <div class="relative z-10 px-6 md:px-10 mt-6 flex gap-3 overflow-x-auto">
-      <div class="photo-ph rounded-xl w-24 h-32 md:w-28 md:h-36 flex-shrink-0 flex items-end p-2">
-        <span class="text-white text-xs font-medium">any<br/>destination</span>
-      </div>
-      <div class="photo-ph rounded-xl w-24 h-32 md:w-28 md:h-36 flex-shrink-0 flex items-end p-2" style="background:linear-gradient(135deg,#1D9E75,#0F6E56);">
-        <span class="text-white text-xs font-medium">live weather<br/>data</span>
-      </div>
-      <div class="photo-ph rounded-xl w-24 h-32 md:w-28 md:h-36 flex-shrink-0 flex items-end p-2" style="background:linear-gradient(135deg,#D4537E,#993556);">
-        <span class="text-white text-xs font-medium">real-time<br/>search</span>
-      </div>
-      <div class="photo-ph rounded-xl w-24 h-32 md:w-28 md:h-36 flex-shrink-0 flex items-end p-2" style="background:linear-gradient(135deg,#378ADD,#185FA5);">
-        <span class="text-white text-xs font-medium">day-by-day<br/>itinerary</span>
-      </div>
-      <div class="photo-ph rounded-xl w-24 h-32 md:w-28 md:h-36 flex-shrink-0 flex items-end p-2" style="background:linear-gradient(135deg,#EF9F27,#854F0B);">
-        <span class="text-white text-xs font-medium">packing &amp;<br/>advisory</span>
-      </div>
-    </div>
-
-    <!-- BOOK / CTA -->
-    <div class="relative z-10 mt-auto px-6 md:px-10 pb-10 flex justify-end">
-      <button class="bg-white text-black text-sm font-medium px-8 py-3 rounded-full hover:bg-white/90 transition-colors"
-        onclick="window.parent.document.getElementById('chat-anchor')?.scrollIntoView({behavior:'smooth'})">
-        Plan my trip
-      </button>
-    </div>
-  </div>
-
-  <!-- HOW IT WORKS -->
-  <div id="how-it-works" class="dark-section rounded-2xl mt-3 md:mt-5 px-6 md:px-16 py-16 md:py-20">
-    <div class="flex items-center gap-4 mb-12">
-      <h2 class="font-display text-white text-3xl md:text-4xl tracking-wide">HOW IT WORKS</h2>
-      <div class="flex-1 h-px bg-white/20"></div>
-    </div>
-
-    <div class="grid md:grid-cols-2 gap-10 mb-16">
-      <p class="text-white/70 text-sm leading-relaxed">
-        Tell TravelGenie your destination, dates, and budget. It chains together a
-        <span class="text-[#E8B98A]">weather tool</span>, a
-        <span class="text-[#E8B98A]">live search tool</span>, and a
-        <span class="text-[#E8B98A]">mock booking tool</span> to draft a full itinerary in one pass.
-      </p>
-      <p class="text-white/70 text-sm leading-relaxed">
-        No need to juggle tabs for forecasts, attractions, and prices — TravelGenie pulls it all
-        together, then <span class="text-[#E8B98A]">revises the plan live</span> as you refine budget,
-        pace, or interests in the chat below.
-      </p>
-    </div>
-
-    <!-- TIMELINE -->
-    <div class="relative pl-8">
-      <div class="absolute left-0 top-2 bottom-2 w-px timeline-line"></div>
-
-      <div class="relative mb-12 flex items-start gap-6">
-        <div class="absolute -left-8 top-1.5 w-2.5 h-2.5 rounded-full bg-[#E8B98A]"></div>
-        <div class="w-40 flex-shrink-0">
-          <p class="text-white/50 text-xs uppercase tracking-wide">Step 1</p>
-          <p class="text-white font-medium">Weather + search</p>
-        </div>
-        <div class="photo-ph rounded-lg w-20 h-16" style="background:linear-gradient(135deg,#1D9E75,#0F6E56);"></div>
-      </div>
-
-      <div class="relative mb-12 flex items-start gap-6">
-        <div class="absolute -left-8 top-1.5 w-2.5 h-2.5 rounded-full bg-[#E8B98A]"></div>
-        <div class="w-40 flex-shrink-0">
-          <p class="text-white/50 text-xs uppercase tracking-wide">Step 2</p>
-          <p class="text-white font-medium">Draft itinerary</p>
-        </div>
-        <div class="photo-ph rounded-lg w-20 h-16" style="background:linear-gradient(135deg,#378ADD,#185FA5);"></div>
-      </div>
-
-      <div class="relative flex items-start gap-6">
-        <div class="absolute -left-8 top-1.5 w-2.5 h-2.5 rounded-full bg-[#E8B98A]"></div>
-        <div class="w-40 flex-shrink-0">
-          <p class="text-white/50 text-xs uppercase tracking-wide">Step 3</p>
-          <p class="text-white font-medium">Refine &amp; simulate booking</p>
-        </div>
-        <div class="photo-ph rounded-lg w-20 h-16" style="background:linear-gradient(135deg,#D4537E,#993556);"></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- WHAT'S INCLUDED -->
-  <div id="included" class="dark-section rounded-2xl mt-3 md:mt-5 px-6 md:px-16 py-16 md:py-20">
-    <div class="flex items-center gap-4 mb-12">
-      <h2 class="font-display text-white text-3xl md:text-4xl tracking-wide">TOOLS INCLUDED</h2>
-      <div class="flex-1 h-px bg-white/20"></div>
-    </div>
-
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-      <div class="border border-white/15 rounded-xl p-5">
-        <i data-lucide="cloud-sun" class="w-6 h-6 text-[#E8B98A] mb-3"></i>
-        <p class="text-white font-medium mb-1">Weather</p>
-        <p class="text-white/50 text-xs leading-relaxed">Live forecasts ground packing tips and timing for every day.</p>
-      </div>
-      <div class="border border-white/15 rounded-xl p-5">
-        <i data-lucide="search" class="w-6 h-6 text-[#E8B98A] mb-3"></i>
-        <p class="text-white font-medium mb-1">Search</p>
-        <p class="text-white/50 text-xs leading-relaxed">Current attractions, neighborhoods, and local events.</p>
-      </div>
-      <div class="border border-white/15 rounded-xl p-5">
-        <i data-lucide="ticket" class="w-6 h-6 text-[#E8B98A] mb-3"></i>
-        <p class="text-white font-medium mb-1">Booking</p>
-        <p class="text-white/50 text-xs leading-relaxed">A simulated hotel and activity lock-in, clearly marked mock.</p>
-      </div>
-      <div class="border border-white/15 rounded-xl p-5">
-        <i data-lucide="backpack" class="w-6 h-6 text-[#E8B98A] mb-3"></i>
-        <p class="text-white font-medium mb-1">Packing list</p>
-        <p class="text-white/50 text-xs leading-relaxed">Season-specific packing and a weather advisory, every trip.</p>
-      </div>
-    </div>
-  </div>
-
-  <!-- CTA -->
-  <div id="cta" class="relative rounded-2xl mt-3 md:mt-5 overflow-hidden min-h-[420px] flex items-end" style="background: linear-gradient(180deg, #3A2E24 0%, #1B140F 100%);">
-    <div class="p-6 md:p-10 w-full">
-      <div class="bg-black/40 backdrop-blur-sm rounded-xl p-6 md:p-8 max-w-md">
-        <h3 class="text-white text-xl font-medium mb-1">Ready to plan your trip?</h3>
-        <p class="text-white/60 text-sm mb-6">Tell the agent where and when — it takes it from there.</p>
-        <p class="text-white/50 text-xs uppercase tracking-wide mb-2">Try it below</p>
-        <div class="flex gap-2">
-          <input type="text" id="cta-input" placeholder="e.g. 5 days in Lisbon, $150/day"
-            class="flex-1 bg-white/10 border border-white/20 rounded-full px-4 py-2.5 text-sm text-white placeholder-white/40" />
-          <button class="bg-white text-black text-sm font-medium px-5 py-2.5 rounded-full flex-shrink-0"
-            onclick="sendToChat()">
-            Start
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- FOOTER -->
-  <footer class="px-6 md:px-10 py-8 flex flex-col md:flex-row items-center justify-between gap-4 text-white/60 text-sm">
-    <div class="flex items-center gap-2 text-white">
-      <i data-lucide="compass" class="w-4 h-4"></i>
-      <span class="font-semibold tracking-wide text-xs">TRAVELGENIE</span>
-    </div>
-    <div class="flex items-center gap-6">
-      <a href="#how-it-works" class="hover:text-white">How it works</a>
-      <a href="#included" class="hover:text-white">Tools</a>
-      <a href="#cta" class="hover:text-white">Contact</a>
-    </div>
-    <button class="border border-white/30 px-5 py-2 rounded-full text-xs hover:bg-white/10 transition-colors"
-      onclick="window.parent.document.getElementById('chat-anchor')?.scrollIntoView({behavior:'smooth'})">
-      Plan trip
-    </button>
-  </footer>
-
-</div>
-
-<script>
-  lucide.createIcons();
-
-  function fitTitle() {
-    const el = document.getElementById('hero-title');
-    if (!el) return;
-    const container = el.parentElement;
-    const width = container.clientWidth;
-    const text = el.textContent.trim();
-    let size = width / (text.length * 0.62);
-    size = Math.max(32, Math.min(140, size));
-    el.style.fontSize = size + 'px';
-  }
-  fitTitle();
-  window.addEventListener('load', fitTitle);
-  window.addEventListener('resize', fitTitle);
-  if (document.fonts && document.fonts.ready) {
-    document.fonts.ready.then(fitTitle);
-  }
-
-  function sendToChat() {
-    const inputEl = document.getElementById('cta-input');
-    const value = inputEl ? inputEl.value.trim() : '';
-
-    const anchor = window.parent.document.getElementById('chat-anchor');
-    if (anchor) anchor.scrollIntoView({ behavior: 'smooth' });
-
-    const textarea = window.parent.document.querySelector('[data-testid="stChatInput"] textarea');
-    if (textarea && value) {
-      const setter = Object.getOwnPropertyDescriptor(window.parent.HTMLTextAreaElement.prototype, 'value').set;
-      setter.call(textarea, value);
-      textarea.dispatchEvent(new Event('input', { bubbles: true }));
-      setTimeout(() => textarea.focus(), 400);
-    }
-  }
-</script>
-
+<body>
+  <main class="shell">
+    <section class="hero">
+      <nav><div class="brand"><span class="brand-mark">&#10022;</span>TRAVELGENIE</div><div class="navlinks"><a href="#how">How it works</a><a href="#ideas">Trip ideas</a></div><button class="button light" onclick="goToPlanner()">Plan a trip</button></nav>
+      <div class="hero-content"><div class="eyebrow"><span class="dot"></span> Intelligent trips, beautifully planned</div><h1>Go farther.<br><em>Feel more.</em></h1><p class="lead">A thoughtful travel co-pilot that turns a destination, a budget, and a few days into a trip that feels entirely yours.</p><div class="hero-actions"><button class="button light" onclick="goToPlanner()">Build my itinerary&nbsp; →</button><a class="text-link" href="#ideas">Explore trip ideas</a></div></div>
+      <aside class="route-card"><div class="route-head"><strong>Your next escape</strong><span>LIVE DRAFT</span></div><div class="route"><i class="pin"></i><div><b>Tokyo</b><small>Street food &amp; neon nights</small></div><time>DAY 01</time></div><div class="route"><i class="pin"></i><div><b>Kyoto</b><small>Temples &amp; slow mornings</small></div><time>DAY 04</time></div><div class="route"><i class="pin"></i><div><b>Osaka</b><small>Markets &amp; late dinners</small></div><time>DAY 07</time></div></aside>
+    </section>
+    <div class="proof"><div><b>Weather-aware</b>Smart timing &amp; packing notes</div><div><b>Live local research</b>Current spots, not stale lists</div><div><b>Designed around you</b>Budget, pace &amp; interests included</div></div>
+    <section class="section" id="ideas"><div class="section-top"><div><span class="section-label">Start with a spark</span><h2>Every great trip begins with a feeling.</h2></div><p>Pick a mood, borrow an itinerary, or bring us the trip you have been dreaming about.</p></div><div class="trips"><article class="trip"><span class="tag">7 days · spring</span><strong>Japan after dark</strong><span>Tokyo, Kyoto &amp; Osaka</span></article><article class="trip"><span class="tag">3 days · easy pace</span><strong>Goa, unhurried</strong><span>Coastlines &amp; local flavour</span></article><article class="trip"><span class="tag">4 days · culture</span><strong>Roman holiday</strong><span>History, pasta &amp; piazzas</span></article></div></section>
+    <section class="section" id="how"><div class="section-top"><div><span class="section-label">Travel, considered</span><h2>Less searching. More looking forward.</h2></div><p>TravelGenie combines practical details with the small discoveries that make a trip memorable.</p></div><div class="services"><article class="service"><span class="number">01 / CONTEXT</span><h3>We read the room</h3><p>Weather, seasonality, opening hours and your travel rhythm shape every recommendation.</p></article><article class="service"><span class="number">02 / CURATION</span><h3>We build the days</h3><p>Morning to night, with a sensible route, room to wander and clear budget signals.</p></article><article class="service"><span class="number">03 / REFINEMENT</span><h3>You make it yours</h3><p>Change the pace, swap an interest, or ask for a new direction at any time.</p></article></div></section>
+  </main>
+  <script>function goToPlanner(){const anchor=window.parent.document.getElementById('chat-anchor');if(anchor){anchor.scrollIntoView({behavior:'smooth'});}setTimeout(()=>window.parent.document.querySelector('[data-testid="stChatInput"] textarea')?.focus(),450);}</script>
 </body>
 </html>
