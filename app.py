@@ -11,8 +11,8 @@ from langchain_core.messages import HumanMessage, AIMessage
 load_dotenv()
 
 def extract_text(output) -> str:
-    """Some models (e.g. Gemini) return output as a list of content blocks
-    instead of a plain string. Pull out just the readable text."""
+    """Some models return output as a list of content blocks instead of a
+    plain string. Pull out just the readable text."""
     if isinstance(output, str):
         return output
     if isinstance(output, list):
@@ -28,9 +28,9 @@ def extract_text(output) -> str:
 st.set_page_config(page_title="TravelGenie", page_icon="🧭", layout="centered")
 
 hero_html = Path("static/hero.html").read_text()
-components.html(hero_html, height=2400)
+components.html(hero_html, height=2400, scrolling=True)
 
-missing = [k for k in ["XAI_API_KEY", "OPENWEATHERMAP_API_KEY", "TAVILY_API_KEY"] if not os.getenv(k)]
+missing = [k for k in ["GROQ_API_KEY", "OPENWEATHERMAP_API_KEY", "TAVILY_API_KEY"] if not os.getenv(k)]
 if missing:
     st.warning(f"Missing environment variables: {', '.join(missing)}. Add them to your .env file.")
     st.stop()

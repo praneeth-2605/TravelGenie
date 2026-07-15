@@ -4,7 +4,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
 from agent.tools import get_all_tools
 
-SYSTEM_PROMPT = """You are TravelGenie, an expert trip-planning agent.stst
+SYSTEM_PROMPT = """You are TravelGenie, an expert trip-planning agent.
 
 1. Produce a DAY-BY-DAY itinerary for the destination and dates given.
    Use the search tool for real, current attractions/neighborhoods, and the
@@ -19,15 +19,15 @@ SYSTEM_PROMPT = """You are TravelGenie, an expert trip-planning agent.stst
 Use markdown, structure by Day 1 / Day 2 / ..., morning/afternoon/evening.
 """
 
-def build_agent_executor(xai_api_key: str | None = None) -> AgentExecutor:
-    api_key = xai_api_key or os.getenv("XAI_API_KEY")
+def build_agent_executor(groq_api_key: str | None = None) -> AgentExecutor:
+    api_key = groq_api_key or os.getenv("GROQ_API_KEY")
     if not api_key:
-        raise ValueError("XAI_API_KEY is not set.")
+        raise ValueError("GROQ_API_KEY is not set.")
 
     llm = ChatOpenAI(
-        model=os.getenv("GROK_MODEL", "grok-4.5"),
+        model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
         api_key=api_key,
-        base_url="https://api.x.ai/v1",
+        base_url="https://api.groq.com/openai/v1",
         temperature=0.4,
         max_tokens=4000,
     )
