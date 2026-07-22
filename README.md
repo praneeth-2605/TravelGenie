@@ -21,11 +21,13 @@ TravelGenie is an AI-powered travel planning application that creates personaliz
 ## 🛠️ Tech Stack
 
 - Python
+- Langchain
 - Streamlit
-- OpenAI API
+- Groq API
 - HTML
 - CSS
 - JavaScript
+  
 
 ---
 
@@ -85,7 +87,7 @@ pip install -r requirements.txt
 Create a `.env` file and add your API key:
 
 ```env
-OPENAI_API_KEY=your_api_key
+GROQ_API_KEY=your_api_key
 ```
 
 ---
@@ -102,13 +104,11 @@ The application will launch automatically in your browser.
 
 ## 💡 Future Enhancements
 
-- ✈️ Flight booking integration
+
 - 🏨 Hotel booking integration
 - 💸 Expense tracker
 - 📄 PDF itinerary download
-- 🎤 Voice-based travel assistant
 - 🌐 Multi-language support
-- 🗺️ Interactive maps
 
 ---
 
