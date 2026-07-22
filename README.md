@@ -106,6 +106,10 @@ The application will launch automatically in your browser.
 
 
 - 🏨 Hotel booking integration
+- Multi-Agent Specialization
+- Collaborative/Group Trip Planning
+- Cost Optimization Agent Loop
+- Map & Visual Itinerary View
 - 💸 Expense tracker
 - 📄 PDF itinerary download
 - 🌐 Multi-language support
