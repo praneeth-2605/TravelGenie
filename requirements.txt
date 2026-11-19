@@ -1,0 +1,23 @@
+# API
+fastapi>=0.115
+uvicorn[standard]>=0.30
+sse-starlette>=2.1
+python-multipart>=0.0.9
+python-dotenv>=1.0
+
+# Agents
+langchain>=1.0
+langchain-openai>=1.0
+langchain-tavily>=0.2
+langgraph>=1.0
+langgraph-checkpoint-sqlite>=2.0
+aiosqlite>=0.20
+
+# RAG
+chromadb>=1.0
+fastembed>=0.4
+rank-bm25>=0.2
+langchain-text-splitters>=0.3
+pypdf>=5.0
+
+requests>=2.32

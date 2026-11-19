@@ -1,0 +1,17 @@
+venv/
+__pycache__/
+*.pyc
+.env
+.DS_Store
+
+# runtime data: vector DB, uploads, conversation memory
+storage/
+
+# frontend
+frontend/node_modules/
+frontend/dist/
+
+# local editor / tool settings
+.vscode/
+.claude/
+.idea/

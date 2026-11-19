@@ -1,0 +1,183 @@
+"""Hybrid knowledge store: ChromaDB (dense vectors) + BM25 (keywords).
+
+Dense search catches paraphrases ("cheap eats" ~ "budget street food");
+BM25 catches exact terms dense models blur (place names, "e-visa", "Line 3").
+Both read the same chunks, which live in Chroma; the BM25 index is rebuilt
+in memory whenever the collection changes.
+"""
+
+from __future__ import annotations
+
+import re
+import threading
+from dataclasses import dataclass
+
+import chromadb
+from rank_bm25 import BM25Okapi
+
+from backend.config import settings
+from backend.rag import models
+from backend.rag.ingest import Chunk
+
+_TOKEN = re.compile(r"[a-z0-9]+")
+_STOP = set("a an the and or of to in on for with at by from is are was be it this that as".split())
+
+
+def tokenize(text: str) -> list[str]:
+    return [t for t in _TOKEN.findall(text.lower()) if t not in _STOP]
+
+
+@dataclass
+class Hit:
+    id: str
+    text: str
+    metadata: dict
+    score: float = 0.0
+
+
+class KnowledgeStore:
+    def __init__(self) -> None:
+        settings.chroma_dir.mkdir(parents=True, exist_ok=True)
+        self._client = chromadb.PersistentClient(path=str(settings.chroma_dir))
+        self._col = self._client.get_or_create_collection(
+            settings.collection, metadata={"hnsw:space": "cosine"}, embedding_function=None
+        )
+        self._lock = threading.RLock()
+        self._bm25: BM25Okapi | None = None
+        self._bm25_rows: list[Hit] = []
+        self._dirty = True
+
+    # ---------- writes ----------
+    def upsert(self, chunks: list[Chunk]) -> int:
+        if not chunks:
+            return 0
+        with self._lock:
+            for i in range(0, len(chunks), 64):
+                batch = chunks[i:i + 64]
+                self._col.upsert(
+                    ids=[c.id for c in batch],
+                    documents=[c.text for c in batch],
+                    metadatas=[c.metadata for c in batch],
+                    embeddings=models.embed_documents([c.embed_text for c in batch]),
+                )
+            self._dirty = True
+        return len(chunks)
+
+    def delete_document(self, doc_id: str) -> None:
+        with self._lock:
+            self._col.delete(where={"doc_id": doc_id})
+            self._dirty = True
+
+    def delete_where(self, where: dict) -> None:
+        with self._lock:
+            self._col.delete(where=where)
+            self._dirty = True
+
+    # ---------- reads ----------
+    def count(self) -> int:
+        return self._col.count()
+
+    def has_doc(self, doc_id: str) -> bool:
+        return bool(self._col.get(where={"doc_id": doc_id}, limit=1)["ids"])
+
+    def documents(self) -> list[dict]:
+        """One row per source document, with chunk counts."""
+        rows = self._col.get(include=["metadatas"])
+        docs: dict[str, dict] = {}
+        for meta in rows["metadatas"]:
+            d = docs.setdefault(meta["doc_id"], {
+                "doc_id": meta["doc_id"],
+                "source": meta.get("source"),
+                "title": meta.get("title") or meta.get("source"),
+                "source_type": meta.get("source_type"),
+                "destination": meta.get("destination"),
+                "created_at": meta.get("created_at"),
+                "chunks": 0,
+            })
+            d["chunks"] += 1
+        return sorted(docs.values(), key=lambda d: (d["source_type"], d["title"] or ""))
+
+    def destinations(self) -> set[str]:
+        rows = self._col.get(include=["metadatas"])
+        return {m["destination"] for m in rows["metadatas"] if m.get("destination")}
+
+    def get_neighbors(self, hit: Hit) -> list[Hit]:
+        """The chunks immediately before/after a hit in the same document."""
+        idx = hit.metadata.get("chunk_index")
+        if idx is None:
+            return []
+        ids = [f"{hit.metadata['doc_id']}-{idx - 1}", f"{hit.metadata['doc_id']}-{idx + 1}"]
+        rows = self._col.get(ids=ids, include=["documents", "metadatas"])
+        return [Hit(i, d, m) for i, d, m in zip(rows["ids"], rows["documents"], rows["metadatas"])]
+
+    def dense_search(self, query: str, k: int = 20, where: dict | None = None) -> list[Hit]:
+        if self.count() == 0:
+            return []
+        res = self._col.query(
+            query_embeddings=[models.embed_query(query)],
+            n_results=min(k, self.count()),
+            where=where,
+            include=["documents", "metadatas", "distances"],
+        )
+        return [
+            Hit(i, d, m, 1.0 - dist)
+            for i, d, m, dist in zip(res["ids"][0], res["documents"][0], res["metadatas"][0], res["distances"][0])
+        ]
+
+    def keyword_search(self, query: str, k: int = 20, where: dict | None = None) -> list[Hit]:
+        with self._lock:
+            if self._dirty:
+                self._rebuild_bm25()
+            if not self._bm25:
+                return []
+            scores = self._bm25.get_scores(tokenize(query))
+            rows = self._bm25_rows
+        ranked = sorted(zip(scores, rows), key=lambda x: x[0], reverse=True)
+        out = []
+        for score, row in ranked:
+            if score <= 0:
+                break
+            if where and not _matches(row.metadata, where):
+                continue
+            out.append(Hit(row.id, row.text, row.metadata, float(score)))
+            if len(out) >= k:
+                break
+        return out
+
+    def _rebuild_bm25(self) -> None:
+        rows = self._col.get(include=["documents", "metadatas"])
+        self._bm25_rows = [Hit(i, d, m) for i, d, m in zip(rows["ids"], rows["documents"], rows["metadatas"])]
+        corpus = [tokenize(f"{h.metadata.get('section', '')} {h.text}") for h in self._bm25_rows]
+        self._bm25 = BM25Okapi(corpus) if corpus else None
+        self._dirty = False
+
+
+def _matches(meta: dict, where: dict) -> bool:
+    """Evaluate the small subset of Chroma `where` syntax we use."""
+    for key, cond in where.items():
+        if key == "$and":
+            if not all(_matches(meta, c) for c in cond):
+                return False
+        elif key == "$or":
+            if not any(_matches(meta, c) for c in cond):
+                return False
+        elif isinstance(cond, dict):
+            if "$in" in cond and meta.get(key) not in cond["$in"]:
+                return False
+            if "$eq" in cond and meta.get(key) != cond["$eq"]:
+                return False
+        elif meta.get(key) != cond:
+            return False
+    return True
+
+
+_store: KnowledgeStore | None = None
+_store_lock = threading.Lock()
+
+
+def get_store() -> KnowledgeStore:
+    global _store
+    with _store_lock:
+        if _store is None:
+            _store = KnowledgeStore()
+        return _store
