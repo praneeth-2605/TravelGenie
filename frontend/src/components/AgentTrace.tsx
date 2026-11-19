@@ -1,26 +1,28 @@
 import { useState } from 'react'
 import {
-  AlertTriangle, Check, ChevronDown, CloudSun, Compass, Loader2, MinusCircle, PenLine, Search, Ticket, Wallet,
+  AlertTriangle, BedDouble, Check, ChevronDown, CloudSun, Compass, Landmark, Loader2, MinusCircle, PenLine, Route, Search, Ticket,
 } from 'lucide-react'
 import type { AgentEvent, AgentName } from '../lib/api'
 
-const META: Record<AgentName, { label: string; icon: typeof Search }> = {
-  supervisor: { label: 'Supervisor', icon: Compass },
-  research: { label: 'Research', icon: Search },
-  weather: { label: 'Weather', icon: CloudSun },
-  budget: { label: 'Budget', icon: Wallet },
-  booking: { label: 'Booking', icon: Ticket },
-  writer: { label: 'Itinerary writer', icon: PenLine },
+export const META: Record<AgentName, { label: string; icon: typeof Search; job: string }> = {
+  supervisor: { label: 'Supervisor', icon: Compass, job: 'Understands your request and assigns agents' },
+  research: { label: 'Research', icon: Search, job: 'Searches the knowledge base and the web' },
+  weather: { label: 'Weather', icon: CloudSun, job: 'Checks the forecast or seasonal norms' },
+  stays: { label: 'Stays', icon: BedDouble, job: 'Finds real hostels and hotels by price' },
+  sights: { label: 'Sightseeing', icon: Landmark, job: 'Finds local sights and activities' },
+  booking: { label: 'Booking', icon: Ticket, job: 'Makes simulated bookings' },
+  planner: { label: 'Planner', icon: Route, job: 'Builds 3 budget options and your day plan' },
+  writer: { label: 'Writer', icon: PenLine, job: 'Writes a cited answer' },
 }
 
 /** Collapse the event log into the latest state per agent, in first-seen order. */
-function latest(steps: AgentEvent[]) {
+export function latest(steps: AgentEvent[]) {
   const map = new Map<AgentName, AgentEvent>()
   for (const s of steps) map.set(s.agent, { ...map.get(s.agent), ...s, detail: s.detail || map.get(s.agent)?.detail || '' })
   return [...map.values()]
 }
 
-function StatusIcon({ status }: { status: AgentEvent['status'] }) {
+export function StatusIcon({ status }: { status: AgentEvent['status'] }) {
   if (status === 'running') return <Loader2 className="size-3.5 animate-spin text-accent" />
   if (status === 'done') return <Check className="size-3.5 text-ok" />
   if (status === 'error') return <AlertTriangle className="size-3.5 text-warn" />
@@ -32,11 +34,11 @@ export function AgentTrace({ steps, live }: { steps: AgentEvent[]; live: boolean
   const rows = latest(steps)
   if (!rows.length) return null
   const running = rows.find(r => r.status === 'running')
-  const specialists = rows.filter(r => r.agent !== 'supervisor' && r.agent !== 'writer').length
+  const specialists = rows.filter(r => !['supervisor', 'writer', 'planner'].includes(r.agent)).length
   const summary = live && running
     ? `${META[running.agent].label}: ${running.detail || 'working'}…`
     : `${specialists} agent${specialists === 1 ? '' : 's'} consulted`
-  const expanded = open || (live && !!running && running.agent !== 'writer')
+  const expanded = open
 
   return (
     <div className="mb-3 rounded-xl border border-line bg-surface-2/60 text-sm">

@@ -40,6 +40,12 @@ class Settings:
     # Web results older than this are ignored by the cache (days).
     web_cache_ttl_days: int = 14
 
+    # Auth
+    secret_key: str | None = _key("SECRET_KEY")
+    google_client_id: str | None = _key("GOOGLE_CLIENT_ID")
+    # Set COOKIE_SECURE=true when served over HTTPS (production).
+    cookie_secure: bool = os.getenv("COOKIE_SECURE", "false").lower() == "true"
+
     cors_origins: list[str] = field(
         default_factory=lambda: os.getenv(
             "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"

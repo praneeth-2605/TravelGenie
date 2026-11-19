@@ -13,8 +13,9 @@ from langchain_core.tools import tool
 from backend.config import settings
 
 
-def weather_forecast(city: str) -> dict:
-    """5-day forecast from OpenWeatherMap, summarised per day."""
+def weather_forecast(city: str, lat: float | None = None, lon: float | None = None) -> dict:
+    """5-day forecast from OpenWeatherMap, summarised per day. Pass lat/lon when
+    known: OWM's own geocoder can pick a same-named town in another country."""
     if not settings.openweather_api_key:
         return {"error": "Weather not configured (OPENWEATHERMAP_API_KEY missing)."}
     key = settings.openweather_api_key
@@ -26,12 +27,17 @@ def weather_forecast(city: str) -> dict:
         return r.json()
 
     try:
-        geo = call("https://api.openweathermap.org/geo/1.0/direct", q=city, limit=1)
-        if not isinstance(geo, list) or not geo:
-            return {"error": f"Could not find location '{city}'."}
-        place = geo[0]
+        if lat is not None and lon is not None:
+            place = {"lat": lat, "lon": lon, "name": city.split(",")[0].strip(), "country": ""}
+        else:
+            geo = call("https://api.openweathermap.org/geo/1.0/direct", q=city, limit=1)
+            if not isinstance(geo, list) or not geo:
+                return {"error": f"Could not find location '{city}'."}
+            place = geo[0]
         data = call("https://api.openweathermap.org/data/2.5/forecast",
                     lat=place["lat"], lon=place["lon"], units="metric")
+        if not place.get("country"):
+            place["country"] = data.get("city", {}).get("country", "")
     except PermissionError as exc:
         return {"error": str(exc)}
     except (requests.RequestException, ValueError, KeyError) as exc:

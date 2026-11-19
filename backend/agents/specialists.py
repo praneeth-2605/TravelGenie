@@ -15,6 +15,7 @@ from langgraph.config import get_stream_writer
 from backend.agents.state import GraphState
 from backend.agents.tools import mock_book_item, weather_forecast
 from backend.llm import main_llm, text_of
+from backend.places import geocode, get_places
 from backend.rag.pipeline import retrieve
 
 
@@ -41,8 +42,8 @@ async def research_agent(state: GraphState) -> dict:
     dest = trip.get("destination")
     request = _latest_request(state)
 
-    jobs = [asyncio.to_thread(retrieve, request, 6, True, dest)]
-    if dest and state.get("intent") in ("plan", "revise"):
+    jobs = [asyncio.to_thread(retrieve, request, 5, True, dest)]
+    if dest and state.get("intent") == "plan":
         interests = ", ".join(trip.get("interests") or [])
         angle = f"top things to do, neighbourhoods and food in {dest} {interests}".strip()
         jobs.append(asyncio.to_thread(retrieve, angle, 5, True, dest, False))
@@ -52,7 +53,7 @@ async def research_agent(state: GraphState) -> dict:
     for r in results:
         for s in r.sources:
             key = (s.source, s.text[:80])
-            if key not in seen and len(sources) < 8:
+            if key not in seen and len(sources) < 6:
                 seen.add(key)
                 sources.append(s.to_dict())
     for n, s in enumerate(sources, start=1):
@@ -71,16 +72,27 @@ async def research_agent(state: GraphState) -> dict:
 
 # ------------------------------------------------------------------ weather
 async def weather_agent(state: GraphState) -> dict:
-    dest = (state.get("trip") or {}).get("destination")
+    trip = state.get("trip") or {}
+    dest = trip.get("destination")
     if not dest:
         emit("weather", "skipped", "No destination yet")
         return {}
     emit("weather", "running", f"Fetching the forecast for {dest}")
-    data = await asyncio.to_thread(weather_forecast, dest)
+    # Geocode with the country so 'Goa' means Goa, India (not Goa in the Philippines).
+    query = f"{dest}, {trip['country']}" if trip.get("country") else dest
+    geo = await asyncio.to_thread(geocode, query)
+    data = await asyncio.to_thread(weather_forecast, dest, geo["lat"] if geo else None, geo["lon"] if geo else None)
     if "error" in data:
         emit("weather", "error", data["error"])
         return {"findings": {"weather": data["error"]}, "weather": None}
     days = data["daily"]
+    start = trip.get("start_date")
+    if start and days and start > days[-1]["date"]:
+        # The trip is beyond the 5-day forecast window: today's weather would mislead.
+        emit("weather", "done", f"Trip starts {start}, beyond the 5-day forecast · using seasonal norms")
+        return {"findings": {"weather": f"The trip starts {start}, beyond the live forecast window. "
+                                        f"Use typical seasonal weather for {dest} at that time of year."},
+                "weather": None}
     lines = [f"{d['date']}: {d['min_c']}–{d['max_c']}°C, {d['condition']}, rain {d['rain_mm']}mm" for d in days]
     note = ("Live 5-day forecast for " + data["location"] + " (fetched " + data["fetched_at"] + "):\n"
             + "\n".join(lines) +
@@ -89,33 +101,55 @@ async def weather_agent(state: GraphState) -> dict:
     return {"findings": {"weather": note}, "weather": data}
 
 
-# ------------------------------------------------------------------ budget
-BUDGET_PROMPT = """You are the Budget agent of a travel-planning team.
-Estimate a realistic cost breakdown for this trip. Use the knowledge excerpts
-when they contain prices or budget tips; otherwise use typical costs and say
-they are estimates.
-
-Return compact markdown:
-- a table with rows: Accommodation, Food, Local transport, Activities, Buffer (10-15%), Total
-  (columns: Item | Per day | Trip total), in the traveller's currency
-- 2-4 concrete money-saving tips for this destination
-- one line verdict: does the stated budget fit? If not, what to change.
-Do not write an itinerary."""
+# ------------------------------------------------------------------ stays
+def _place_query(trip: dict) -> str | None:
+    dest = trip.get("destination")
+    if not dest:
+        return None
+    return dest
 
 
-async def budget_agent(state: GraphState) -> dict:
-    emit("budget", "running", "Estimating costs")
-    dest = (state.get("trip") or {}).get("destination")
-    ctx = ""
-    if dest:
-        r = await asyncio.to_thread(retrieve, f"budget costs prices money tips {dest}", 3, False, dest, False)
-        ctx = r.context_block()
-    msg = await main_llm().ainvoke([
-        SystemMessage(BUDGET_PROMPT),
-        HumanMessage(f"Trip brief: {_brief(state)}\nRequest: {_latest_request(state)}\n\nKnowledge:\n{ctx}"),
-    ])
-    emit("budget", "done", "Cost breakdown ready")
-    return {"findings": {"budget": text_of(msg.content)}}
+async def stays_agent(state: GraphState) -> dict:
+    trip = state.get("trip") or {}
+    dest = _place_query(trip)
+    if not dest:
+        emit("stays", "skipped", "No destination yet")
+        return {}
+    emit("stays", "running", f"Finding hostels and hotels in {dest}")
+    places = await asyncio.to_thread(get_places, dest)
+    stays = places["stays"]
+    counts = {t: sum(s["tier"] == t for s in stays) for t in ("budget", "mid", "luxury")}
+    if not stays:
+        emit("stays", "error", places.get("error") or "No listings found; the planner will use estimates")
+    else:
+        emit("stays", "done", f"{counts['budget']} budget · {counts['mid']} mid-range · "
+                              f"{counts['luxury']} luxury stays (Wikivoyage)")
+    return {"stays": stays, "map_center": places.get("center")}
+
+
+# ------------------------------------------------------------------ sights
+async def sights_agent(state: GraphState) -> dict:
+    trip = state.get("trip") or {}
+    dest = _place_query(trip)
+    if not dest:
+        emit("sights", "skipped", "No destination yet")
+        return {}
+    emit("sights", "running", f"Finding local sights in {dest}")
+    places = await asyncio.to_thread(get_places, dest)
+    sights = places["sights"]
+    interests = [i.lower() for i in (trip.get("interests") or [])]
+    if interests:
+        # Nudge sights matching the traveller's interests to the front.
+        def boost(s):
+            text = f"{s['name']} {s.get('description', '')}".lower()
+            return -sum(any(w in text for w in i.split()) for i in interests)
+        sights = sorted(sights, key=boost)
+    mapped = sum(1 for s in sights if s.get("lat") is not None)
+    if not sights:
+        emit("sights", "error", places.get("error") or "No sights found; the planner will use research only")
+    else:
+        emit("sights", "done", f"{len(sights)} sights and activities · {mapped} on the map")
+    return {"sights": sights}  # the stays agent sets map_center (one writer per key per step)
 
 
 # ------------------------------------------------------------------ booking
@@ -150,6 +184,7 @@ async def booking_agent(state: GraphState) -> dict:
 SPECIALISTS = {
     "research": research_agent,
     "weather": weather_agent,
-    "budget": budget_agent,
+    "stays": stays_agent,
+    "sights": sights_agent,
     "booking": booking_agent,
 }

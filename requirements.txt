@@ -5,6 +5,12 @@ sse-starlette>=2.1
 python-multipart>=0.0.9
 python-dotenv>=1.0
 
+# Accounts
+bcrypt>=4.1
+pyjwt>=2.8
+google-auth>=2.30
+email-validator>=2.1
+
 # Agents
 langchain>=1.0
 langchain-openai>=1.0
@@ -19,5 +25,8 @@ fastembed>=0.4
 rank-bm25>=0.2
 langchain-text-splitters>=0.3
 pypdf>=5.0
+
+# Exports
+fpdf2>=2.7
 
 requests>=2.32

@@ -37,8 +37,16 @@ def main_llm() -> ChatOpenAI:
 
 @lru_cache
 def writer_llm() -> ChatOpenAI:
-    """The strongest model: writes the final cited itinerary."""
-    return _make(settings.groq_writer_model, temperature=0.4, max_tokens=3500)
+    """The strongest model: writes cited answers to questions."""
+    return _make(settings.groq_writer_model, temperature=0.4, max_tokens=3000)
+
+
+@lru_cache
+def planner_llm() -> ChatOpenAI:
+    """The strongest model in JSON mode with light reasoning, so a full
+    three-option plan fits inside the free tier's per-minute token budget."""
+    llm = _make(settings.groq_writer_model, temperature=0.3, max_tokens=4500)
+    return llm.bind(response_format={"type": "json_object"}, reasoning_effort="low")
 
 
 @lru_cache

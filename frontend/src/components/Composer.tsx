@@ -7,9 +7,10 @@ interface Props {
   onSend: (text: string) => void
   onStop: () => void
   autoFocus?: boolean
+  placeholder?: string
 }
 
-export function Composer({ busy, disabled, onSend, onStop, autoFocus }: Props) {
+export function Composer({ busy, disabled, onSend, onStop, autoFocus, placeholder }: Props) {
   const [text, setText] = useState('')
   const ref = useRef<HTMLTextAreaElement>(null)
 
@@ -48,11 +49,11 @@ export function Composer({ busy, disabled, onSend, onStop, autoFocus }: Props) {
             submit()
           }
         }}
-        placeholder={disabled ? 'Add GROQ_API_KEY to .env to start planning' : 'Where to? Add dates, budget and travel style…'}
+        placeholder={placeholder ?? 'Where to? Add dates, budget and travel style…'}
         className="block max-h-[220px] w-full resize-none bg-transparent px-2.5 py-2 text-[15px] text-ink placeholder:text-faint focus:outline-none disabled:cursor-not-allowed"
       />
       <div className="flex items-center justify-between px-1.5 pt-1">
-        <span className="text-xs text-faint">Enter to send · Shift+Enter for a new line</span>
+        <span className="text-xs text-faint">Enter to send · Shift+Enter for new line</span>
         {busy ? (
           <button type="button" onClick={onStop} aria-label="Stop generating"
             className="grid size-8 place-items-center rounded-lg bg-ink text-bg transition hover:opacity-80">
