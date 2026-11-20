@@ -1,5 +1,5 @@
 # TravelGenie — one container: FastAPI serves the API and the built React app.
-# Built and run by Hugging Face Spaces (Docker SDK, port 7860).
+# Runs on Google Cloud Run (or any Docker host). Listens on $PORT (default 8080).
 
 # ---------- 1. Build the React frontend ----------
 FROM node:22-slim AS web
@@ -20,7 +20,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     COOKIE_SECURE=true \
     HOME=/home/user
 
-# Hugging Face runs containers as uid 1000.
+# Run as an unprivileged user.
 RUN useradd -m -u 1000 user
 WORKDIR /app
 
@@ -40,6 +40,7 @@ COPY --from=web /web/dist ./frontend/dist
 RUN mkdir -p storage && chown -R user:user /app
 USER user
 
-EXPOSE 7860
-CMD ["uvicorn", "backend.api.main:app", "--host", "0.0.0.0", "--port", "7860", \
-     "--proxy-headers", "--forwarded-allow-ips", "*"]
+ENV PORT=8080
+EXPOSE 8080
+# Cloud Run injects $PORT; --proxy-headers so the app sees https and its public host.
+CMD ["sh", "-c", "exec uvicorn backend.api.main:app --host 0.0.0.0 --port ${PORT} --proxy-headers --forwarded-allow-ips '*'"]
