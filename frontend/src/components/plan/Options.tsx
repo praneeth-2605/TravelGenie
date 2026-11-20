@@ -1,15 +1,17 @@
-import { BedDouble, Check, ExternalLink, MapPin, TriangleAlert } from 'lucide-react'
+import { ArrowRight, BedDouble, Car, Check, ExternalLink, Loader2, MapPin, TriangleAlert } from 'lucide-react'
 import { money, TIER_META, type PlanOption, type Tier, type TripPlan } from '../../lib/api'
+import { MODE_ICON } from './GettingThere'
 
 const SEGMENTS: { key: keyof PlanOption['breakdown']; label: string; color: string }[] = [
+  { key: 'travel', label: 'Getting there', color: 'bg-[#3f7cb8]' },
   { key: 'stay', label: 'Stay', color: 'bg-accent' },
   { key: 'food', label: 'Food', color: 'bg-[#d9a441]' },
-  { key: 'transport', label: 'Transport', color: 'bg-[#4f8f86]' },
+  { key: 'transport', label: 'Local transport', color: 'bg-[#4f8f86]' },
   { key: 'activities', label: 'Activities', color: 'bg-[#6c7fc2]' },
   { key: 'other', label: 'Other', color: 'bg-faint' },
 ]
 
-function BreakdownBar({ o, currency }: { o: PlanOption; currency: string }) {
+export function BreakdownBar({ o, currency }: { o: PlanOption; currency: string }) {
   const total = SEGMENTS.reduce((a, s) => a + (o.breakdown[s.key] || 0), 0) || 1
   return (
     <div>
@@ -32,29 +34,34 @@ function BreakdownBar({ o, currency }: { o: PlanOption; currency: string }) {
   )
 }
 
-function OptionCard({ o, plan, selected, onSelect }: { o: PlanOption; plan: TripPlan; selected: boolean; onSelect: () => void }) {
+interface CardProps {
+  o: PlanOption
+  plan: TripPlan
+  selected: boolean
+  choosing: boolean
+  disabled: boolean
+  onChoose: () => void
+}
+
+function OptionCard({ o, plan, selected, choosing, disabled, onChoose }: CardProps) {
   const meta = TIER_META[o.tier]
   const cur = plan.currency
   const place = o.stay.place
   const budgetMax = plan.trip.budget_max
+  const gt = o.getting_there
+  const GtIcon = gt ? MODE_ICON[gt.mode as keyof typeof MODE_ICON] ?? Car : null
   return (
     <article
-      onClick={onSelect}
-      className={`relative flex cursor-pointer flex-col rounded-2xl border bg-surface p-5 transition ${selected ? 'border-accent shadow-[0_0_0_3px_var(--accent-soft)]' : 'border-line hover:border-accent/40'}`}
+      className={`relative flex flex-col rounded-2xl border bg-surface p-5 transition ${selected ? 'border-accent shadow-[0_0_0_3px_var(--accent-soft)]' : 'border-line'}`}
     >
-      {o.tier === 'yours' && (
-        <span className="absolute -top-2.5 left-5 rounded-full bg-accent px-2.5 py-0.5 text-[11px] font-semibold text-accent-ink">Matched to you</span>
+      {selected ? (
+        <span className="absolute -top-2.5 left-5 flex items-center gap-1 rounded-full bg-accent px-2.5 py-0.5 text-[11px] font-semibold text-accent-ink"><Check className="size-3" /> Your plan</span>
+      ) : o.tier === 'yours' && (
+        <span className="absolute -top-2.5 left-5 rounded-full bg-ink px-2.5 py-0.5 text-[11px] font-semibold text-bg">Matched to you</span>
       )}
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <div className="text-sm font-medium text-muted">{meta.emoji} {o.label}</div>
-          <h3 className="mt-0.5 font-serif text-xl leading-tight font-semibold">{o.title}</h3>
-        </div>
-        <button type="button" onClick={e => { e.stopPropagation(); onSelect() }} aria-pressed={selected}
-          aria-label={`Select ${o.label} option`}
-          className={`grid size-6 shrink-0 place-items-center rounded-full border-2 ${selected ? 'border-accent bg-accent text-accent-ink' : 'border-line'}`}>
-          {selected && <Check className="size-3.5" />}
-        </button>
+      <div>
+        <div className="text-sm font-medium text-muted">{meta.emoji} {o.label}</div>
+        <h3 className="mt-0.5 font-serif text-xl leading-tight font-semibold">{o.title}</h3>
       </div>
 
       <div className="mt-4">
@@ -73,7 +80,17 @@ function OptionCard({ o, plan, selected, onSelect }: { o: PlanOption; plan: Trip
 
       <div className="mt-4"><BreakdownBar o={o} currency={cur} /></div>
 
-      <div className="mt-4 rounded-xl bg-surface-2 p-3">
+      {gt && GtIcon && (
+        <div className="mt-4 flex items-start gap-2.5 rounded-xl bg-surface-2 p-3">
+          <GtIcon className="mt-0.5 size-4 shrink-0 text-accent" />
+          <div className="min-w-0 text-sm">
+            <div className="font-medium capitalize">{gt.mode}{gt.duration ? ` · ${gt.duration}` : ''}</div>
+            <div className="text-xs text-muted">{gt.detail}{gt.cost ? ` · ${money(gt.cost, cur)} return` : ''}</div>
+          </div>
+        </div>
+      )}
+
+      <div className="mt-3 rounded-xl bg-surface-2 p-3">
         <div className="flex items-start gap-2.5">
           <BedDouble className="mt-0.5 size-4 shrink-0 text-accent" />
           <div className="min-w-0">
@@ -85,7 +102,7 @@ function OptionCard({ o, plan, selected, onSelect }: { o: PlanOption; plan: Trip
             </div>
             {o.stay.why && <p className="mt-1.5 text-xs leading-relaxed text-muted">{o.stay.why}</p>}
             {place?.url && (
-              <a href={place.url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+              <a href={place.url} target="_blank" rel="noreferrer"
                 className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-accent hover:underline">
                 Website <ExternalLink className="size-3" />
               </a>
@@ -102,11 +119,21 @@ function OptionCard({ o, plan, selected, onSelect }: { o: PlanOption; plan: Trip
         </ul>
       )}
       {o.note && <p className="mt-3 text-xs text-muted italic">{o.note}</p>}
+      <div className="mt-auto pt-5">
+        <button type="button" onClick={onChoose} disabled={disabled}
+          className={`flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition disabled:opacity-60 ${selected ? 'bg-accent text-accent-ink' : 'border border-accent/60 text-accent hover:bg-accent hover:text-accent-ink'}`}>
+          {choosing && <Loader2 className="size-4 animate-spin" />}
+          {choosing ? 'Building your detailed plan…' : selected ? 'Open my plan' : `Choose ${o.label}`}
+          {!choosing && <ArrowRight className="size-4" />}
+        </button>
+      </div>
     </article>
   )
 }
 
-export function Options({ plan, selected, onSelect }: { plan: TripPlan; selected: Tier; onSelect: (t: Tier) => void }) {
+export function Options({ plan, selected, choosing, onChoose }: {
+  plan: TripPlan; selected: Tier | null; choosing: Tier | null; onChoose: (t: Tier) => void
+}) {
   return (
     <div className="space-y-5">
       {plan.answer && (
@@ -121,14 +148,16 @@ export function Options({ plan, selected, onSelect }: { plan: TripPlan; selected
           </details>
         )}
       </div>
-      <div className="grid gap-4 pt-1 xl:grid-cols-3">
+      <div className="grid gap-4 pt-1 @3xl:grid-cols-3">
         {plan.options.map(o => (
-          <OptionCard key={o.tier} o={o} plan={plan} selected={selected === o.tier} onSelect={() => onSelect(o.tier)} />
+          <OptionCard key={o.tier} o={o} plan={plan} selected={selected === o.tier} choosing={choosing === o.tier}
+            disabled={choosing != null} onChoose={() => onChoose(o.tier)} />
         ))}
       </div>
       <p className="text-xs text-faint">
-        All three options share the same sightseeing plan; they differ in stay, food, transport and extras.
-        Prices are estimates from guide listings; check before booking.
+        All three options share the same sightseeing plan; they differ in how you travel, where you stay, food and extras.
+        Choose one to get a detailed plan with meals, daily spend and a booking checklist, then discuss it in the chat.
+        Prices are estimates; check before booking.
       </p>
     </div>
   )

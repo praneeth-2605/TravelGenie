@@ -1,8 +1,10 @@
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
-import { BedDouble, BookOpen, CalendarDays, LayoutGrid, Loader2, Map as MapIcon, MessageSquare, Sparkles } from 'lucide-react'
 import {
-  ApiError, api, streamChat, uid, type AgentEvent, type ChatMessage, type Source, type Tier, type TripPlan,
+  BedDouble, CalendarDays, CloudSun, Globe, LayoutDashboard, LayoutGrid, Loader2, Map as MapIcon, MessageSquare, Sparkles, Star, TrainFront,
+} from 'lucide-react'
+import {
+  ApiError, api, streamChat, uid, TIER_META, type AgentEvent, type ChatMessage, type Source, type Tier, type TripPlan,
 } from '../lib/api'
 import { useTrips } from '../components/AppShell'
 import { META, StatusIcon, latest } from '../components/AgentTrace'
@@ -13,21 +15,29 @@ import { Timeline } from '../components/plan/Timeline'
 // Leaflet is large: load the map only when the Map tab opens.
 const TripMap = lazy(() => import('../components/plan/TripMap').then(m => ({ default: m.TripMap })))
 import { Stays } from '../components/plan/Stays'
-import { Sources } from '../components/plan/Sources'
 import { ExportMenu } from '../components/plan/ExportMenu'
+import { Overview, type SectionTab } from '../components/plan/Overview'
+import { GettingThere } from '../components/plan/GettingThere'
+import { WeatherPanel } from '../components/plan/WeatherPanel'
+import { WebPanel } from '../components/plan/WebPanel'
+import { YourPlan } from '../components/plan/YourPlan'
 
-type Tab = 'options' | 'itinerary' | 'map' | 'stays' | 'sources'
+type Tab = SectionTab
 const TABS: { id: Tab; label: string; icon: typeof MapIcon }[] = [
+  { id: 'yourplan', label: 'Your plan', icon: Star },
+  { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'options', label: 'Options', icon: LayoutGrid },
   { id: 'itinerary', label: 'Itinerary', icon: CalendarDays },
-  { id: 'map', label: 'Map', icon: MapIcon },
+  { id: 'transport', label: 'Getting there', icon: TrainFront },
   { id: 'stays', label: 'Stays', icon: BedDouble },
-  { id: 'sources', label: 'Sources', icon: BookOpen },
+  { id: 'weather', label: 'Weather', icon: CloudSun },
+  { id: 'web', label: 'Web', icon: Globe },
+  { id: 'map', label: 'Map', icon: MapIcon },
 ]
 
 function AgentsAtWork({ steps }: { steps: AgentEvent[] }) {
   const rows = latest(steps)
-  const order = ['supervisor', 'research', 'weather', 'stays', 'sights', 'booking', 'planner', 'writer']
+  const order = ['supervisor', 'research', 'weather', 'stays', 'sights', 'transport', 'web', 'booking', 'planner', 'writer']
   rows.sort((a, b) => order.indexOf(a.agent) - order.indexOf(b.agent))
   return (
     <div className="mx-auto max-w-xl py-10">
@@ -69,9 +79,11 @@ export function TripWorkspace() {
   const [plan, setPlan] = useState<TripPlan | null>(null)
   const [sources, setSources] = useState<Source[]>([])
   const [busy, setBusy] = useState(false)
-  const [tab, setTab] = useState<Tab>('options')
-  const [selected, setSelected] = useState<Tier>('yours')
+  const [tab, setTab] = useState<Tab>('overview')
+  const [choosing, setChoosing] = useState<Tier | null>(null)
+  const [chooseError, setChooseError] = useState<string | null>(null)
   const [activeSource, setActiveSource] = useState<number | null>(null)
+  const selected: Tier | null = plan?.selected_tier || null
   const [focusId, setFocusId] = useState<string | null>(null)
   const [mobilePane, setMobilePane] = useState<'chat' | 'plan'>('plan')
 
@@ -114,7 +126,7 @@ export function TripWorkspace() {
           setSources(f.sources)
           if (f.plan) {
             setPlan(f.plan)
-            setTab('options')
+            setTab(f.plan.selected_tier ? 'yourplan' : 'overview')
             setMobilePane('plan')
             if (f.trip.destination) setTitle(`${f.trip.destination} · ${f.trip.days ?? f.plan.days.length} days`)
           }
@@ -145,6 +157,7 @@ export function TripWorkspace() {
       if (cancelled) return
       setTitle(t.title)
       setPlan(t.plan)
+      setTab(t.plan?.selected_tier ? 'yourplan' : 'overview')
       setSources(t.sources)
       setMessages(t.messages.map((m, i) => ({ id: `h${i}`, role: m.role, content: m.content,
         hasPlan: m.role === 'assistant' && !!t.plan && i === t.messages.length - 1 })))
@@ -169,7 +182,28 @@ export function TripWorkspace() {
     if (el) el.scrollTop = el.scrollHeight
   }, [messages])
 
-  const cite = (n: number) => { setActiveSource(n); setTab('sources'); setMobilePane('plan') }
+  const choose = async (tier: Tier) => {
+    // Already chosen with details: just open it.
+    const opt = plan?.options.find(o => o.tier === tier)
+    if (plan?.selected_tier === tier && opt?.details) { setTab('yourplan'); setMobilePane('plan'); return }
+    setChoosing(tier)
+    setChooseError(null)
+    try {
+      const res = await api.selectOption(tripId, tier)
+      setPlan(res.plan)
+      setTab('yourplan')
+      setMessages(ms => [...ms,
+        { id: uid(), role: 'user', content: `I choose the ${TIER_META[tier].label} option.` },
+        { id: uid(), role: 'assistant', content: res.message }])
+      refresh()
+    } catch (err) {
+      setChooseError((err as Error).message)
+    } finally {
+      setChoosing(null)
+    }
+  }
+
+  const cite = (n: number) => { setActiveSource(n); setTab('web'); setMobilePane('plan') }
   const showOnMap = (id: string) => { setFocusId(id); setTab('map') }
   const liveSteps = [...messages].reverse().find(m => m.role === 'assistant' && m.streaming)?.steps ?? []
   const planning = busy && !plan && liveSteps.length > 0
@@ -189,7 +223,7 @@ export function TripWorkspace() {
             </button>
           ))}
         </div>
-        {plan && <ExportMenu tripId={tripId} selected={selected} />}
+        {plan && <ExportMenu tripId={tripId} selected={selected ?? 'yours'} />}
       </header>
 
       <div className="flex min-h-0 flex-1">
@@ -201,12 +235,17 @@ export function TripWorkspace() {
               <p className="pt-10 text-center text-sm text-muted">Describe your trip to get started.</p>
             )}
             {messages.map(m => (
-              <Message key={m.id} message={m} onCite={cite} onOpenPlan={() => { setTab('options'); setMobilePane('plan') }} />
+              <Message key={m.id} message={m} onCite={cite} onOpenPlan={() => { setTab(selected ? 'yourplan' : 'overview'); setMobilePane('plan') }} />
             ))}
           </div>
           <div className="border-t border-line p-3">
+            {selected && (
+              <div className="mb-2 flex items-center gap-1.5 text-xs text-muted">
+                <Star className="size-3.5 fill-accent text-accent" /> Chatting about your <strong className="text-ink">{TIER_META[selected].planName}</strong>
+              </div>
+            )}
             <Composer busy={busy} onSend={send} onStop={() => abortRef.current?.abort()}
-              placeholder={plan ? 'Refine it, e.g. “make it cheaper”' : 'Where to? Days, budget, interests…'} />
+              placeholder={selected ? `Ask about your ${TIER_META[selected].planName}…` : plan ? 'Refine it, e.g. “make it cheaper”' : 'Where to? From, days, budget…'} />
           </div>
         </section>
 
@@ -215,25 +254,35 @@ export function TripWorkspace() {
           {plan ? (
             <>
               <nav className="flex shrink-0 gap-1 overflow-x-auto border-b border-line px-3 pt-2" role="tablist">
-                {TABS.map(t => (
+                {TABS.filter(t => t.id !== 'yourplan' || selected).map(t => (
                   <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)}
-                    className={`flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2 text-sm transition ${tab === t.id ? 'border-accent font-medium text-ink' : 'border-transparent text-muted hover:text-ink'}`}>
-                    <t.icon className="size-4" /> {t.label}
-                    {t.id === 'sources' && sources.length > 0 && <span className="rounded-full bg-surface-2 px-1.5 text-[11px]">{sources.length}</span>}
+                    className={`flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2 text-sm transition ${tab === t.id ? 'border-accent font-medium text-ink' : 'border-transparent text-muted hover:text-ink'} ${t.id === 'yourplan' ? 'text-accent' : ''}`}>
+                    <t.icon className={`size-4 ${t.id === 'yourplan' ? 'fill-accent text-accent' : ''}`} /> {t.label}
                   </button>
                 ))}
                 {busy && <span className="ml-auto flex items-center gap-1.5 self-center pr-2 text-xs text-muted"><Loader2 className="size-3.5 animate-spin" /> Updating…</span>}
               </nav>
-              <div className={`min-h-0 flex-1 ${tab === 'map' ? 'p-4' : 'overflow-y-auto p-4 sm:p-6'}`}>
-                {tab === 'options' && <Options plan={plan} selected={selected} onSelect={setSelected} />}
+              {chooseError && (
+                <div role="alert" className="mx-4 mt-3 rounded-lg border border-bad/30 bg-bad/10 px-3 py-2 text-sm text-bad">{chooseError}</div>
+              )}
+              <div key={tab} className={`@container min-h-0 flex-1 ${tab === 'map' ? 'p-4' : 'overflow-y-auto p-4 sm:p-6'}`}>
+                {tab === 'yourplan' && selected && (
+                  <YourPlan plan={plan} tier={selected} choosing={choosing === selected}
+                    onRebuild={() => choose(selected)} onAsk={q => { setMobilePane('chat'); send(q) }}
+                    onSwitch={() => setTab('options')} />
+                )}
+                {tab === 'overview' && <Overview plan={plan} onOpen={setTab} onChoose={choose} choosing={choosing} selected={selected} />}
+                {tab === 'options' && <Options plan={plan} selected={selected} choosing={choosing} onChoose={choose} />}
                 {tab === 'itinerary' && <Timeline plan={plan} onCite={cite} onShowOnMap={showOnMap} />}
+                {tab === 'transport' && <GettingThere plan={plan} />}
+                {tab === 'weather' && <WeatherPanel plan={plan} />}
+                {tab === 'web' && <WebPanel plan={plan} sources={plan.sources.length ? plan.sources : sources} active={activeSource} />}
                 {tab === 'map' && (
                   <Suspense fallback={<div className="grid h-full place-items-center"><Loader2 className="size-6 animate-spin text-faint" /></div>}>
-                    <TripMap plan={plan} selected={selected} focusId={focusId} />
+                    <TripMap plan={plan} selected={selected ?? 'yours'} focusId={focusId} />
                   </Suspense>
                 )}
-                {tab === 'stays' && <Stays plan={plan} selected={selected} />}
-                {tab === 'sources' && <Sources sources={plan.sources.length ? plan.sources : sources} active={activeSource} />}
+                {tab === 'stays' && <Stays plan={plan} selected={selected ?? 'yours'} />}
               </div>
             </>
           ) : planning ? (

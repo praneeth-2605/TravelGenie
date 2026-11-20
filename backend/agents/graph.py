@@ -24,10 +24,10 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 from pydantic import ValidationError
 
-from backend.agents.plan import TripPlan, enrich, money
+from backend.agents.plan import OptionDetails, TripPlan, enrich, money
 from backend.agents.specialists import SPECIALISTS, emit
 from backend.agents.state import GraphState, RoutingDecision
-from backend.llm import fast_llm, planner_llm, text_of, writer_llm
+from backend.llm import ask_json, fast_llm, planner_llm, text_of, writer_llm
 
 log = logging.getLogger(__name__)
 
@@ -44,12 +44,15 @@ Specialists (pick only what this turn needs):
 - weather: live 5-day forecast for the destination
 - stays: real hostels/hotels for the destination, by price tier
 - sights: real local sights and activities for the destination
+- transport: every way to get there from the origin city (flight, train, bus, car, ferry)
+- web: web search results / destination guide (what to know, safety, etiquette)
 - booking: SIMULATED bookings of hotels/activities/transport
 
 Rules:
 - "plan": the user describes a trip (a destination plus length, dates or budget) and no plan exists
-  yet, or they want a new destination. Use research + weather + stays + sights. Even if the message
-  also asks a question, the intent is "plan".
+  yet, or they want a new destination. Use research + weather + stays + sights + transport + web.
+  Even if the message also asks a question, the intent is "plan".
+- Questions about getting there (trains, flights, buses, fares) → "question" with transport.
 - "revise": change the existing plan (cheaper, more relaxed, swap a day, different budget, more
   days). Call only what the change needs; stays/sights only if the destination changed.
 - "question": a specific travel question with no new plan wanted. Usually research only.
@@ -57,7 +60,8 @@ Rules:
 - "chat": greetings / small talk. No specialists.
 - Merge new details into the trip brief; keep earlier details unless the user changed them.
   Fill gaps from the profile: currency from home_currency, travelers from default_travelers,
-  budget_min/budget_max from the profile's budget range only if the user gave none.
+  origin from home_city, budget_min/budget_max from the profile's budget range only if the user
+  gave none. "from X" / "flying out of X" sets origin.
 - A single budget figure ("under 30000", "30k budget") goes in budget_max.
 - Rough dates ("mid-December", "next month") → a concrete start_date guess (15th of that month,
   the next occurrence after today)."""
@@ -78,6 +82,8 @@ async def supervisor(state: GraphState) -> dict:
     trip["interests"] = trip.get("interests") or profile.get("interests") or []
     trip["start_date"] = _future_date(trip.get("start_date"))
     trip.setdefault("currency", profile.get("home_currency"))
+    if not trip.get("origin") and profile.get("home_city"):
+        trip["origin"] = profile["home_city"]
     if not trip.get("travelers") and profile.get("default_travelers"):
         trip["travelers"] = profile["default_travelers"]
 
@@ -86,16 +92,20 @@ async def supervisor(state: GraphState) -> dict:
     if intent == "chat":
         agents = []
     elif intent == "plan":
-        agents = list(dict.fromkeys(["research", "weather", "stays", "sights", *agents]))
+        agents = list(dict.fromkeys(["research", "weather", "stays", "sights", "transport", "web", *agents]))
     elif intent == "revise" and not state.get("plan"):
         intent = "plan"
-        agents = ["research", "weather", "stays", "sights"]
+        agents = ["research", "weather", "stays", "sights", "transport", "web"]
     elif intent in ("question",) and not agents:
         agents = ["research"]
-    # A new destination needs fresh places and weather.
+    # A new destination needs fresh places, weather and transport.
     if trip.get("destination") and old_trip.get("destination") and \
             trip["destination"].lower() != old_trip["destination"].lower() and intent in ("plan", "revise"):
-        agents = list(dict.fromkeys([*agents, "stays", "sights", "weather", "research"]))
+        agents = list(dict.fromkeys([*agents, "stays", "sights", "weather", "research", "transport", "web"]))
+    # A new starting city needs a fresh transport comparison.
+    if trip.get("origin") and (trip.get("origin") or "").lower() != (old_trip.get("origin") or "").lower() \
+            and state.get("plan") and intent in ("plan", "revise", "question"):
+        agents = list(dict.fromkeys([*agents, "transport"]))
 
     reason = decision.reason or f"intent: {intent}"
     emit("supervisor", "done", reason, intent=intent, agents=agents,
@@ -176,7 +186,8 @@ Return exactly this shape (all money in "currency", totals for the WHOLE party):
                        "place_id": "p12 or null", "cost": 0, "cite": [1]}}]}}],
  "options": [
    {{"tier": "budget", "title": "catchy name", "total": 0,
-     "breakdown": {{"stay": 0, "food": 0, "transport": 0, "activities": 0, "other": 0}},
+     "breakdown": {{"travel": 0, "stay": 0, "food": 0, "transport": 0, "activities": 0, "other": 0}},
+     "getting_there": {{"mode": "train", "detail": "which service/class and route", "duration": "...", "cost": 0}},
      "stay": {{"place_id": "p3 or null", "name": "", "nightly": 0, "why": "why it suits"}},
      "alt_stay_ids": ["p4"], "highlights": ["how this option feels: dining, transport, extras"],
      "fits_budget": null, "note": null}},
@@ -197,6 +208,10 @@ Rules:
   Stay MUST be a luxury-tier candidate. Its total must be clearly the highest of the three.
 - yours option: {yours_rule} Pick the BEST stay candidate (any tier) that fits what's left after
   food, transport and activities, and say why it is the best match in "why". Set fits_budget.
+- getting_there: pick the travel mode that suits each option from the TRANSPORT comparison
+  (budget → cheapest e.g. bus/sleeper train; luxury → fastest/most comfortable e.g. flight; yours →
+  best value for the budget). "travel" in the breakdown and getting_there.cost = ROUND TRIP for all
+  travellers. If origin is unknown, set getting_there null and travel 0, and say so in assumptions.
 - Prefer candidates' listed prices; convert to {currency} with approximate rates (note them in
   assumptions). Nights = {nights}. Travellers = {travelers}. Breakdown must add up to total.
 - If no candidate fits, set place_id null and name a realistic type (e.g. "Dorm bed in Anjuna").
@@ -208,10 +223,24 @@ STAY candidates (id [tier] name — area — price — note):
 SIGHT candidates (id [kind] name — area — hours/price — note):
 {sights}
 
+TRANSPORT (per person, one way, {currency}):
+{transport}
+
 Weather: {weather}
 
 Knowledge sources:
 {sources}"""
+
+
+def _fmt_transport(t: dict | None) -> str:
+    if not t or not t.get("modes"):
+        return "(origin unknown or no comparison)"
+    rows = [f"From {t.get('origin')} (~{t.get('distance_km') or '?'} km):"]
+    for m in t["modes"]:
+        if m.get("available"):
+            rows.append(f"- {m['mode']}: {m.get('duration') or '?'}, {m.get('price_min')}-{m.get('price_max')}, "
+                        f"{m.get('route') or ''}")
+    return "\n".join(rows)
 
 
 def _fmt_stays(stays: list[dict]) -> str:
@@ -248,6 +277,23 @@ def _compact_plan(plan: dict) -> str:
     return "\n".join(lines)
 
 
+def _budget_problem(plan: TripPlan, lo: float | None, hi: float | None, currency: str) -> str | None:
+    """Describe how the 'yours' option misses the traveller's range, if it does."""
+    if not hi:
+        return None
+    yours = next(o for o in plan.options if o.tier == "yours")
+    target_lo = (lo or hi * 0.85)
+    if yours.total < target_lo * 0.97:
+        return (f'The "yours" option totals {money(yours.total, currency)}, below the traveller\'s range of '
+                f'{money(lo, currency) if lo else "about " + money(target_lo, currency)} to {money(hi, currency)}. '
+                f'Upgrade it (better stay, faster/more comfortable travel, nicer dining, an extra experience) so the '
+                f'total lands inside the range, ideally 85-100% of the maximum. Keep breakdown sums exact.')
+    if yours.total > hi * 1.03:
+        return (f'The "yours" option totals {money(yours.total, currency)}, above the maximum of '
+                f'{money(hi, currency)}. Bring it inside the range. Keep breakdown sums exact.')
+    return None
+
+
 async def planner(state: GraphState) -> dict:
     trip = state.get("trip") or {}
     profile = state.get("profile") or {}
@@ -276,36 +322,41 @@ async def planner(state: GraphState) -> dict:
         sights=_fmt_sights(state.get("sights") or []),
         weather=_fmt_weather(state.get("weather"), state.get("findings") or {}),
         sources=_fmt_sources(state.get("sources") or []),
+        transport=_fmt_transport(state.get("transport")),
     )
     request = HumanMessage(
         f"Trip brief: {json.dumps({k: v for k, v in trip.items() if v not in (None, [], '')})}\n"
         f"Traveller's latest message: {text_of(state['messages'][-1].content)}")
 
-    plan: TripPlan | None = None
     messages = [SystemMessage(system), request]
-    for attempt in range(2):
-        reply = await planner_llm().ainvoke(messages)
-        raw = text_of(reply.content)
-        try:
-            plan = TripPlan.model_validate_json(re.search(r"\{.*\}", raw, re.S).group(0))
-            tiers = {o.tier for o in plan.options}
-            if tiers != {"budget", "luxury", "yours"}:
-                raise ValueError(f"options must be budget, luxury and yours; got {sorted(tiers)}")
-            break
-        except (ValidationError, ValueError, AttributeError) as exc:
-            log.warning("planner output invalid (attempt %d): %s", attempt + 1, str(exc)[:300])
-            plan = None
-            messages = [*messages, AIMessage(raw[:6000]),
-                        HumanMessage(f"That JSON was invalid: {str(exc)[:500]}. Return the corrected full JSON only.")]
-    if plan is None:
+    try:
+        plan = await ask_json(planner_llm(), messages, TripPlan)
+        # The model can't be trusted to respect the range: check it, and give it one correction round.
+        problem = _budget_problem(plan, lo, hi, currency)
+        if problem:
+            log.info("planner budget correction: %s", problem)
+            emit("planner", "running", "Adjusting “Your budget” to fit your range")
+            fixed = await ask_json(planner_llm(), [*messages, AIMessage(plan.model_dump_json()),
+                                                   HumanMessage(problem + " Return the corrected full JSON only.")], TripPlan)
+            if not _budget_problem(fixed, lo, hi, currency):
+                plan = fixed
+    except RuntimeError as exc:
         emit("planner", "error", "Couldn't build a valid plan; please try again")
-        return {"messages": [AIMessage("Sorry — I couldn't put a valid plan together this time. "
-                                       "Please try again, or simplify the request.")]}
+        return {"messages": [AIMessage(f"Sorry, I couldn't put a valid plan together this time. {exc}")]}
+    yours = next(o for o in plan.options if o.tier == "yours")
+    if hi:
+        yours.fits_budget = (lo or 0) * 0.97 <= yours.total <= hi * 1.03
 
     data = enrich(plan, {**trip, "currency": currency}, state.get("stays") or [], state.get("sights") or [],
-                  state.get("sources") or [], state.get("map_center"), state.get("weather"))
+                  state.get("sources") or [], state.get("map_center"), state.get("weather"),
+                  state.get("transport"), state.get("web_results"))
+    # A revision keeps the traveller's chosen option (its details are regenerated on demand).
+    data["selected_tier"] = state.get("selected_tier") if revising else None
     emit("planner", "done", " · ".join(f"{o['label']} {money(o['total'], currency)}" for o in data["options"]))
-    return {"plan": data, "messages": [AIMessage(_chat_summary(data))]}
+    update = {"plan": data, "messages": [AIMessage(_chat_summary(data))]}
+    if not revising:
+        update["selected_tier"] = None
+    return update
 
 
 def _chat_summary(plan: dict) -> str:
@@ -321,6 +372,74 @@ def _chat_summary(plan: dict) -> str:
     return "\n".join(parts)
 
 
+# ======================================================================= option details
+DETAILS_PROMPT = """You are TravelGenie's trip concierge. The traveller has CHOSEN the "{label}" option
+below. Expand it into a detailed, practical plan as ONE JSON object:
+{{
+ "overview": "3-4 sentences: what this option feels like and why it fits",
+ "days": [{{"day": 1, "summary": "one line", "meals": [{{"meal": "Breakfast", "place": "specific place or area",
+            "try": "what to order", "cost": 0}}], "getting_around": "how to move between today's stops + cost",
+            "spend": 0, "tip": "one practical tip"}}],
+ "booking_checklist": [{{"item": "...", "when": "how far ahead", "where": "site/app/desk", "cost": 0}}],
+ "money_tips": ["..."],
+ "good_to_know": ["..."]
+}}
+Rules: one entry per day ({days} days) matching the day plan; 2-3 meals per day that suit the
+option's comfort level and the traveller's diet ({dietary}); costs in {currency} for the WHOLE party
+({travelers} people); "spend" = that day's total (meals + local transport + activities). The booking
+checklist starts with getting there ({getting_there}) and the stay ({stay}). Be specific and realistic;
+use only well-known or listed places for names, otherwise describe the kind of place and the area.
+
+Chosen option:
+{option}
+
+Day plan:
+{days_text}"""
+
+
+async def generate_details(plan: dict, tier: str, profile: dict | None = None) -> dict:
+    """Expand one option into a detailed plan (meals, getting around, spend, bookings)."""
+    option = next(o for o in plan["options"] if o["tier"] == tier)
+    cur = plan.get("currency", "")
+    gt = option.get("getting_there") or {}
+    days_text = "\n".join(
+        f"Day {d['day']} ({d.get('area') or ''}) {d['title']}: " + "; ".join(f"{i['time']} {i['title']}" for i in d["items"])
+        for d in plan["days"])
+    compact = {k: option.get(k) for k in ("title", "total", "breakdown", "highlights")}
+    compact["stay"] = {"name": option["stay"]["name"], "nightly": option["stay"].get("nightly"),
+                       "area": (option["stay"].get("place") or {}).get("area")}
+    prompt = DETAILS_PROMPT.format(
+        label=option["label"], days=len(plan["days"]), currency=cur, travelers=plan.get("travelers", 1),
+        dietary=(profile or {}).get("dietary") or "no restrictions",
+        getting_there=f"{gt.get('mode')}: {gt.get('detail')}" if gt else "not specified",
+        stay=option["stay"]["name"], option=json.dumps(compact, ensure_ascii=False), days_text=days_text)
+    details = await ask_json(planner_llm(), [HumanMessage(prompt)], OptionDetails)
+    return details.model_dump(by_alias=True)
+
+
+def chosen_block(plan: dict | None, tier: str | None) -> str:
+    """Context about the traveller's chosen option, for the writer."""
+    if not plan or not tier:
+        return ""
+    o = next((x for x in plan.get("options", []) if x["tier"] == tier), None)
+    if not o:
+        return ""
+    cur = plan.get("currency", "")
+    gt = o.get("getting_there") or {}
+    lines = [f'The traveller CHOSE the "{o["label"]}" option ({o["title"]}), total {money(o["total"], cur)}.',
+             f"Stay: {o['stay']['name']} ({money(o['stay'].get('nightly'), cur)}/night). {o['stay'].get('why', '')}"]
+    if gt:
+        lines.append(f"Getting there: {gt.get('mode')}: {gt.get('detail')} ({gt.get('duration') or ''}), "
+                     f"{money(gt.get('cost'), cur)} return.")
+    lines.append("Breakdown: " + ", ".join(f"{k} {money(v, cur)}" for k, v in o["breakdown"].items()))
+    det = o.get("details")
+    if det:
+        for d in det["days"]:
+            meals = "; ".join(f"{m['meal']} at {m['place']}" for m in d.get("meals", []))
+            lines.append(f"Day {d['day']}: {d['summary']} Meals: {meals}. Getting around: {d.get('getting_around') or ''}")
+    return "\n".join(lines)
+
+
 # ======================================================================= writer
 WRITER_PROMPT = """You are TravelGenie's travel expert. Answer the traveller using the specialist
 findings and the numbered knowledge sources below.
@@ -331,7 +450,10 @@ Rules:
 - If no source covers a fact that changes over time (visas, entry rules, prices, opening hours),
   start that part with "⚠️ Couldn't verify this against current sources" and tell the traveller
   to confirm with the official source.
-- Intent "question": answer directly and concisely. If a plan exists, relate the answer to it.
+- Intent "question": answer directly and concisely. If a plan exists, relate the answer to it;
+  if the traveller has chosen an option, answer for THAT option (its budget, stay and transport).
+- For transport questions use the transport comparison: give each realistic mode with duration,
+  price range, route and where to book.
 - Intent "book": confirm the SIMULATED bookings (nothing is really reserved) and how they fit.
 - Intent "chat": reply briefly and warmly; invite them to describe a trip (destination, days,
   budget) to get three budget options.
@@ -340,6 +462,10 @@ Rules:
 Intent: {intent}
 Trip brief: {trip}
 {plan}
+{chosen}
+Transport comparison:
+{transport}
+
 Specialist findings:
 {findings}
 
@@ -354,6 +480,8 @@ async def writer(state: GraphState) -> dict:
         intent=state.get("intent", "question"),
         trip=json.dumps({k: v for k, v in (state.get("trip") or {}).items() if v not in (None, [], "")}),
         plan=_compact_plan(plan) + "\n" if plan else "",
+        chosen=chosen_block(plan, state.get("selected_tier")),
+        transport=_fmt_transport(state.get("transport")),
         findings="\n\n".join(f"### {k}\n{v}" for k, v in (state.get("findings") or {}).items()) or "(none)",
         sources="\n\n".join(f"[{s['n']}] {s['title']} — {s.get('section') or ''}\n{s['text']}"
                             for s in state.get("sources") or []) or "(none)",

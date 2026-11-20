@@ -80,9 +80,20 @@ def tx():
         raise
 
 
+MIGRATIONS = [
+    # (table, column, definition) — added to existing databases on startup
+    ("user_settings", "home_city", "TEXT NOT NULL DEFAULT ''"),
+    ("trips", "selected_tier", "TEXT"),
+]
+
+
 def init() -> None:
     with tx() as c:
         c.executescript(SCHEMA)
+        for table, column, definition in MIGRATIONS:
+            cols = {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}
+            if column not in cols:
+                c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
 def new_id() -> str:
@@ -142,7 +153,7 @@ def public_user(row: sqlite3.Row) -> dict:
 
 # ------------------------------------------------------------------ settings
 SETTINGS_FIELDS = {"home_currency", "travel_style", "default_travelers", "budget_min", "budget_max",
-                   "interests", "dietary", "pace", "theme"}
+                   "interests", "dietary", "pace", "theme", "home_city"}
 
 
 def get_settings(user_id: str) -> dict:

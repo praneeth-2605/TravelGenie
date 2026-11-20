@@ -132,6 +132,11 @@ export function SettingsPage() {
         {/* Travel preferences */}
         <Card title="Travel preferences" desc="Used as defaults for every new trip. Anything you say in a request overrides them.">
           <div className="grid gap-5 sm:grid-cols-2">
+            <label className="block text-sm font-medium sm:col-span-2">Home city
+              <input className={`${field} mt-1.5`} placeholder="e.g. Hyderabad" value={prefs.home_city ?? ''} maxLength={80}
+                onChange={e => setPrefs(p => ({ ...p, home_city: e.target.value }))} autoComplete="address-level2" />
+              <span className="mt-1 block text-xs font-normal text-faint">Where your trips usually start. Used to compare flights, trains, buses and driving.</span>
+            </label>
             <label className="block text-sm font-medium">Home currency
               <select className={`${field} mt-1.5`} value={prefs.home_currency} onChange={e => setPrefs(p => ({ ...p, home_currency: e.target.value }))}>
                 {CURRENCIES.map(c => <option key={c}>{c}</option>)}

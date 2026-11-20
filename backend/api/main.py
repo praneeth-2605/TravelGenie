@@ -20,13 +20,14 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from backend import auth, db, export
-from backend.agents.graph import build_graph
+from backend.agents.graph import build_graph, generate_details
+from backend.agents.plan import money
 from backend.api.routes_account import router as account_router
 from backend.config import ROOT, settings
 from backend.llm import text_of
@@ -123,6 +124,7 @@ async def chat(req: ChatRequest, user=Depends(auth.current_user)):
                        "days": trip.get("days")}
             if plan and state.get("intent") in ("plan", "revise"):
                 updates["plan"] = plan
+                updates["selected_tier"] = plan.get("selected_tier") or ""
                 if trip.get("destination"):
                     updates["title"] = f"{trip['destination']} · {trip.get('days') or len(plan['days'])} days"
             await asyncio.to_thread(db.update_trip, req.trip_id, **{k: v for k, v in updates.items() if v is not None})
@@ -134,6 +136,8 @@ async def chat(req: ChatRequest, user=Depends(auth.current_user)):
                 "trip": trip,
                 "bookings": state.get("bookings") or [],
                 "weather": state.get("weather"),
+                "transport": state.get("transport"),
+                "selected_tier": state.get("selected_tier"),
             })
         except Exception as exc:
             log.exception("chat failed")
@@ -164,6 +168,44 @@ async def get_trip(trip_id: str, user=Depends(auth.current_user)):
     trip["bookings"] = values.get("bookings") or []
     trip["sources"] = values.get("sources") or []
     return trip
+
+
+class SelectBody(BaseModel):
+    tier: Literal["budget", "luxury", "yours"]
+
+
+@app.post("/api/trips/{trip_id}/select")
+async def select_option(trip_id: str, body: SelectBody, user=Depends(auth.current_user)):
+    """Choose one of the three options: builds its detailed plan and focuses the chat on it."""
+    trip = _owned_trip(user, trip_id)
+    plan = trip.get("plan")
+    if not plan:
+        raise HTTPException(409, "This trip has no plan yet.")
+    option = next((o for o in plan["options"] if o["tier"] == body.tier), None)
+    if option is None:
+        raise HTTPException(404, "Option not found.")
+    if not option.get("details"):
+        if not settings.groq_api_key:
+            raise HTTPException(503, "GROQ_API_KEY is not set on the server.")
+        try:
+            option["details"] = await generate_details(plan, body.tier, db.get_settings(user["id"]))
+        except Exception as exc:
+            log.exception("details failed")
+            raise HTTPException(502, _friendly_error(exc))
+    plan["selected_tier"] = body.tier
+    await asyncio.to_thread(db.update_trip, trip_id, plan=plan, selected_tier=body.tier)
+
+    cur = plan.get("currency")
+    reply = (f"Great choice: **{option['label']} · {option['title']}** "
+             f"({money(option['total'], cur)} in total). {option['details']['overview']}\n\n"
+             "Ask me anything about it: what to book first, cheaper swaps, food near your stay, "
+             "or how to get between places.")
+    config = {"configurable": {"thread_id": trip_id}}
+    await app.state.graph.aupdate_state(config, {
+        "plan": plan, "selected_tier": body.tier,
+        "messages": [HumanMessage(f"I choose the {option['label']} option ({option['title']})."), AIMessage(reply)],
+    }, as_node="planner")
+    return {"plan": plan, "message": reply}
 
 
 class TripPatch(BaseModel):

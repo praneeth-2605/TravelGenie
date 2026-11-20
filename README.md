@@ -8,16 +8,21 @@ Tell TravelGenie where you're going and for how long. A team of AI agents finds 
 | 💎 | **Luxury** | Premium comfort: top hotels, fine dining, private transfers |
 | 🎯 | **Your budget** | Fitted to *your* budget range, with the best-matched hostel or hotel |
 
-Every plan can be viewed as comparison cards, a timeline, an interactive map or a stays list, and exported as **PDF, calendar (.ics) or Markdown**.
+**Choose a plan** and TravelGenie expands it into a detailed version (where to eat each day with prices, how to get around, daily spend and a booking checklist) and the chat switches to discussing *your* plan.
+
+After every request you get separate sections: **Overview, Getting there (flight / train / bus / car / ferry), Hotels, Itinerary, Weather, Web search and Map**, and you can export to **PDF, calendar (.ics) or Markdown**.
 
 ---
 
 ## ✨ Features
 
 - 👤 **Accounts**: email + password sign-up, "Continue with Google", secure httpOnly sessions, log out everywhere, account deletion
-- ⚙️ **User settings**: home currency, usual travellers, typical budget range, travel style, pace, interests, dietary needs, light/dark theme. These are used as defaults for every plan.
+- ⚙️ **User settings**: home city, home currency, usual travellers, typical budget range, travel style, pace, interests, dietary needs, light/dark theme. These are used as defaults for every plan.
 - 📊 **Dashboard**: your trips with prices for all three options, stats, upcoming-trip countdown, favourites
-- 🤖 **Seven specialised agents** coordinated by a supervisor (LangGraph), running in parallel
+- 🎯 **Choose a plan** → detailed day-by-day version (meals, getting around, daily spend, booking checklist) + chat focused on it
+- 🚆 **Every way to get there**: flights, trains, buses, self-drive, taxi and ferries compared by price, time, route and where to book
+- 🧩 **Separate sections** after each request: Overview, Getting there, Hotels, Itinerary, Weather, Web search, Map
+- 🤖 **Nine specialised agents** coordinated by a supervisor (LangGraph), running in parallel
 - 🏨 **Real places**: stays (by price tier, with listed prices) and sights from Wikivoyage, plus geocoding from OpenStreetMap
 - 🗺️ **Interactive map** with day-coloured pins and your stay
 - 📚 **Advanced RAG** over a ChromaDB knowledge base: hybrid search, multi-query, reranking, citations, web fallback
@@ -33,6 +38,8 @@ Every plan can be viewed as comparison cards, a timeline, an interactive map or 
                        ├──► Weather    (live forecast / seasonal)        ─┤
   you ─► Supervisor ───┼──► Stays      (hostels & hotels by price tier)  ─┼─► Planner ─► 3 options + day plan
                        ├──► Sightseeing (local sights & activities)      ─┤
+                       ├──► Transport  (flight/train/bus/car/ferry)      ─┤
+                       ├──► Web search (what to know before you go)      ─┤
                        └──► Booking    (simulated bookings)              ──┘   Writer ─► cited answers
 ```
 
@@ -43,7 +50,10 @@ Every plan can be viewed as comparison cards, a timeline, an interactive map or 
 | **Weather** | Live 5-day forecast, or seasonal norms when the trip is further out |
 | **Stays** | Real places to stay from Wikivoyage, grouped Budget / Mid-range / Luxury with listed prices |
 | **Sightseeing** | Real sights and activities with coordinates and opening hours, matched to your interests |
-| **Planner** | Builds the three options (costs, breakdown, best stay, highlights) and the shared day-by-day itinerary as structured JSON |
+| **Transport** | Compares every way to get there from your city (flight, train, bus, car, ferry): price range, duration, route, where to book |
+| **Web search** | Live web results (Tavily), or the destination's Wikivoyage guide: safety, getting around, money, etiquette |
+| **Planner** | Builds the three options (travel mode, costs, breakdown, best stay, highlights) and the shared day-by-day itinerary as structured JSON; checks "Your budget" really fits your range |
+| **Concierge** | When you choose an option: expands it into meals, getting around, daily spend and a booking checklist |
 | **Writer** | Answers questions with inline citations |
 
 All the output formats (cards, timeline, map, PDF, calendar, Markdown) are generated from the planner's one structured plan.
@@ -152,6 +162,7 @@ Run `npm run build` inside `frontend/`; FastAPI then serves the app at http://lo
 | `DELETE` | `/api/account` | Delete account and all trips |
 | `GET` | `/api/trips` · `/api/trips/{id}` | Your trips / one trip with its plan and chat |
 | `PATCH` · `DELETE` | `/api/trips/{id}` | Rename, favourite, delete |
+| `POST` | `/api/trips/{id}/select` | Choose an option: builds its detailed plan and focuses the chat on it |
 | `GET` | `/api/trips/{id}/export?format=pdf\|ics\|md&option=budget\|luxury\|yours` | Download |
 | `POST` | `/api/chat` | Run the agent team (SSE: `agent`, `token`, `final`, `error`) |
 | `GET/POST/DELETE` | `/api/documents` | Knowledge base |

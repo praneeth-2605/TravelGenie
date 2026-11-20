@@ -140,6 +140,7 @@ def _clean(text: str | None, limit: int = 220) -> str:
     if not text:
         return ""
     t = re.sub(r"<ref[^>]*>.*?</ref>|<ref[^>]*/>|<!--.*?-->", "", text, flags=re.S)
+    t = re.sub(r"\[\[(?:File|Image):[^\[\]]*(?:\[\[[^\]]*\]\][^\[\]]*)*\]\]", "", t, flags=re.I)
     t = re.sub(r"\{\{[^{}]*\}\}", "", t)
     t = re.sub(r"\[\[(?:[^|\]]*\|)?([^\]]+)\]\]", r"\1", t)
     t = re.sub(r"\[https?://\S+\s+([^\]]+)\]", r"\1", t)
@@ -332,6 +333,71 @@ def _search_page(destination: str) -> str | None:
         return hits[0]["title"] if hits else None
     except (requests.RequestException, ValueError):
         return None
+
+
+def _root_page(destination: str) -> tuple[str, str] | None:
+    name = destination.split(",")[0].strip()
+    root = _wikitext(name)
+    if root:
+        return root
+    title = _search_page(destination)
+    return _wikitext(title) if title else None
+
+
+def _section_text(wikitext: str, heading: str) -> dict[str, str]:
+    """A level-2 section, split into its sub-sections ('By plane', 'By train'…)."""
+    out: dict[str, str] = {}
+    matches = list(_HEADING.finditer(wikitext))
+    for i, m in enumerate(matches):
+        if len(m.group(1)) != 2 or m.group(2).strip().lower() != heading.lower():
+            continue
+        end = next((n.start() for n in matches[i + 1:] if len(n.group(1)) <= 2), len(wikitext))
+        body = wikitext[m.end():end]
+        parts = re.split(r"^={3,4}\s*(.+?)\s*={3,4}\s*$", body, flags=re.M)
+        intro = _clean(_strip_listings(parts[0]), 700)
+        if intro:
+            out["_intro"] = intro
+        for j in range(1, len(parts) - 1, 2):
+            text = _clean(_strip_listings(parts[j + 1]), 900)
+            name = parts[j].strip().strip("=").strip()
+            if text and name:
+                out[name] = (out.get(name, "") + " " + text).strip()[:900]
+        break
+    return out
+
+
+def _strip_listings(text: str) -> str:
+    """Turn listing templates into 'Name: description' so prose sections stay readable."""
+    def repl(m: re.Match) -> str:
+        end = _template_end(text, m.start())
+        f = _split_fields(text[m.end():end - 2])
+        return f" {f.get('name', '')}: {f.get('content', '')} "
+    out, pos = [], 0
+    for m in _LISTING.finditer(text):
+        if m.start() < pos:
+            continue
+        out.append(text[pos:m.start()])
+        end = _template_end(text, m.start())
+        out.append(repl(m))
+        pos = end
+    out.append(text[pos:])
+    return "".join(out)
+
+
+def get_guide(destination: str) -> dict:
+    """Prose sections from the destination's Wikivoyage page, with a link."""
+    def build():
+        root = _root_page(destination)
+        if not root:
+            return None
+        title, text = root
+        return {
+            "title": title,
+            "url": f"https://en.wikivoyage.org/wiki/{title.replace(' ', '_')}",
+            "sections": {h: _section_text(text, h) for h in
+                         ("Understand", "Get in", "Get around", "Stay safe", "Respect", "Climate", "Cope")},
+        }
+    return _cached(f"guide:{destination.lower().strip()}", build) or {}
 
 
 def get_places(destination: str, max_pages: int = 5) -> dict:

@@ -184,8 +184,13 @@ def pdf(plan: dict, option_tier: str | None = None) -> bytes:
         b = o["breakdown"]
         doc.ln(2)
         text(f"{o['label']} - {o['title']}", 10.5, "B")
-        text(f"Stay {money(b['stay'], cur)} - Food {money(b['food'], cur)} - Transport {money(b['transport'], cur)}"
-             f" - Activities {money(b['activities'], cur)} - Other {money(b['other'], cur)}", 9, "", MUTED, 4.6)
+        text(f"Travel {money(b.get('travel'), cur)} - Stay {money(b['stay'], cur)} - Food {money(b['food'], cur)}"
+             f" - Local transport {money(b['transport'], cur)} - Activities {money(b['activities'], cur)}"
+             f" - Other {money(b['other'], cur)}", 9, "", MUTED, 4.6)
+        gt = o.get("getting_there")
+        if gt:
+            text(f"Getting there: {gt['mode'].title()} - {gt['detail']}" + (f" ({gt['duration']})" if gt.get("duration") else "")
+                 + (f", {money(gt.get('cost'), cur)} return" if gt.get("cost") else ""), 9.5)
         stay = o["stay"]
         line = f"Stay: {stay['name']}"
         if stay.get("nightly"):
@@ -195,6 +200,43 @@ def pdf(plan: dict, option_tier: str | None = None) -> bytes:
         text(line, 9.5)
         for hl in o.get("highlights", []):
             text(f"- {hl}", 9.5)
+
+    # The chosen option, in detail
+    detailed = next((o for o in shown if o.get("details")), None)
+    if detailed:
+        det = detailed["details"]
+        heading(f"Your plan in detail: {detailed['label']}")
+        text(det["overview"], 10)
+        for dd in det["days"]:
+            doc.ln(1)
+            spend = f"  (spend {money(dd.get('spend'), cur)})" if dd.get("spend") else ""
+            text(f"Day {dd['day']}: {dd['summary']}{spend}", 10, "B")
+            for m in dd.get("meals", []):
+                text(f"- {m['meal']}: {m['place']}" + (f" - try {m['try']}" if m.get("try") else "")
+                     + (f" ({money(m.get('cost'), cur)})" if m.get("cost") else ""), 9.5, "", MUTED, 4.8)
+            if dd.get("getting_around"):
+                text(f"- Getting around: {dd['getting_around']}", 9.5, "", MUTED, 4.8)
+        if det.get("booking_checklist"):
+            doc.ln(2)
+            text("Booking checklist", 10.5, "B")
+            for bk in det["booking_checklist"]:
+                text(f"[ ] {bk['item']} - {bk['when']}, via {bk['where']}"
+                     + (f" ({money(bk.get('cost'), cur)})" if bk.get("cost") else ""), 9.5)
+
+    # Getting there
+    t = plan.get("transport")
+    if t and t.get("modes"):
+        heading(f"Getting there from {t.get('origin')}")
+        text(t.get("summary", ""), 9.5, "", MUTED, 4.8)
+        for m in t["modes"]:
+            if not m.get("available"):
+                continue
+            price = (f"{money(m.get('price_min'), t.get('currency'))}-{money(m.get('price_max'), t.get('currency'))} pp one way"
+                     if m.get("price_min") is not None else "")
+            text(f"{m['mode'].title()}: {m.get('duration') or ''} - {price}", 10, "B", INK, 5.4)
+            extra = " - ".join(x for x in (m.get("route"), f"book via {', '.join(m['book_via'])}" if m.get("book_via") else None) if x)
+            if extra:
+                text(extra, 9, "", MUTED, 4.6)
 
     # Day by day
     heading("Day by day")

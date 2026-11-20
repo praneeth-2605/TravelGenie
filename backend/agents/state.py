@@ -10,7 +10,7 @@ from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
-Specialist = Literal["research", "weather", "stays", "sights", "booking"]
+Specialist = Literal["research", "weather", "stays", "sights", "transport", "web", "booking"]
 
 
 class TripBrief(BaseModel):
@@ -27,7 +27,7 @@ class TripBrief(BaseModel):
     # Nullable on purpose: models often send null here, and Groq rejects the
     # whole tool call if the schema demands an array.
     interests: list[str] | None = None
-    origin: str | None = Field(None, description="Where the traveller starts from")
+    origin: str | None = Field(None, description="City the traveller starts from (e.g. 'Hyderabad')")
 
 
 class RoutingDecision(BaseModel):
@@ -69,4 +69,7 @@ class GraphState(TypedDict, total=False):
     stays: list[dict]                 # candidate stays (Wikivoyage), by tier
     sights: list[dict]                # candidate sights
     map_center: dict | None
+    transport: dict | None            # every way to get there (flight/train/bus/car/ferry)
+    web_results: list[dict]           # web search (or Wikivoyage guide) results
     plan: dict | None                 # the latest structured TripPlan (enriched)
+    selected_tier: str | None         # the option the traveller chose: budget | luxury | yours

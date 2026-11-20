@@ -8,15 +8,23 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import math
+import re
+from typing import Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langgraph.config import get_stream_writer
+from pydantic import BaseModel, Field, model_validator
 
 from backend.agents.state import GraphState
 from backend.agents.tools import mock_book_item, weather_forecast
-from backend.llm import main_llm, text_of
-from backend.places import geocode, get_places
+from backend.config import settings
+from backend.llm import ask_json, main_llm, structured_llm, text_of
+from backend.places import geocode, get_guide, get_places
 from backend.rag.pipeline import retrieve
+
+log = logging.getLogger(__name__)
 
 
 def emit(agent: str, status: str, detail: str = "", **extra) -> None:
@@ -181,10 +189,165 @@ async def booking_agent(state: GraphState) -> dict:
             "findings": {"booking": "\n".join(confirmations) or "No bookings made."}}
 
 
+# ------------------------------------------------------------------ transport
+_MODE_WORDS = [("flight", ("flight", "fly", "plane", "air")), ("train", ("train", "rail")),
+               ("bus", ("bus", "coach")), ("ferry", ("ferry", "boat", "ship")),
+               ("car", ("car", "drive", "taxi", "cab", "road"))]
+
+
+class TransportMode(BaseModel):
+    mode: Literal["flight", "train", "bus", "car", "ferry"]
+    label: str | None = Field(None, description="Variant, e.g. 'Self-drive', 'Taxi', 'Sleeper bus'")
+    available: bool = True
+    duration: str | None = Field(None, description="Door-to-door-ish travel time, e.g. '12-14 h'")
+    price_min: float | None = Field(None, description="Per person, one way, in the trip currency")
+    price_max: float | None = None
+    frequency: str | None = Field(None, description="e.g. '6 trains/day', 'hourly'")
+    route: str | None = Field(None, description="Main stations/airports/route, e.g. 'Mumbai CSMT → Madgaon'")
+    book_via: list[str] | None = Field(None, description="Where to book, e.g. IRCTC, redBus, Skyscanner")
+    pros: str | None = None
+    cons: str | None = None
+    best_for: str | None = Field(None, description="budget, balanced, comfort or speed")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalise(cls, data):
+        """Accept 'car (self-drive)' → mode car + label 'Self-drive', etc."""
+        if isinstance(data, dict) and isinstance(data.get("mode"), str):
+            raw = data["mode"].strip()
+            low = raw.lower()
+            for mode, words in _MODE_WORDS:
+                if any(w in low for w in words):
+                    if low != mode and not data.get("label"):
+                        extra = re.sub(rf"\b{mode}\b|[()]", "", raw, flags=re.I).strip(" -–/,")
+                        data["label"] = extra[:1].upper() + extra[1:] if extra else None
+                    data["mode"] = mode
+                    break
+        if isinstance(data, dict) and data.get("book_via") is None:
+            data["book_via"] = []
+        return data
+
+
+class TransportPlan(BaseModel):
+    summary: str = Field(description="One or two sentences comparing the options")
+    modes: list[TransportMode]
+    recommendation: str | None = Field(None, description="Which mode for which kind of traveller")
+
+
+TRANSPORT_PROMPT = """You are the Transport agent of a travel team. Compare EVERY realistic way to travel
+from {origin} to {destination} ({distance}): flight, train, bus, car (self-drive/taxi) and ferry.
+Mark a mode available=false if it doesn't realistically exist (e.g. no train to an island, no
+bus across an ocean) and say why in cons.
+
+Ground your answer in the destination guide's "Get in" notes below when they mention routes,
+stations, airports, durations or prices. Prices are PER PERSON, ONE WAY, in {currency}, as
+realistic ranges for {month}. Name real stations/airports and real booking sites/apps used in
+those countries (e.g. IRCTC, redBus, MakeMyTrip in India; JR, Willer in Japan; SNCF, FlixBus in
+Europe; Skyscanner/Google Flights for flights).
+
+Use the most common direct route for durations (not detours). Self-drive and taxi may be two
+entries with mode "car" and a "label". best_for is one word: budget, balanced, comfort or speed.
+
+Return ONLY JSON: {{"summary": "...", "modes": [{{"mode": "train", "label": null, "available": true,
+"duration": "...", "price_min": 0, "price_max": 0, "frequency": "...", "route": "...",
+"book_via": ["..."], "pros": "...", "cons": "...", "best_for": "budget"}}], "recommendation": "..."}}
+
+Guide notes on getting to {destination}:
+{guide}"""
+
+
+async def transport_agent(state: GraphState) -> dict:
+    trip = state.get("trip") or {}
+    dest, origin = trip.get("destination"), trip.get("origin")
+    if not dest:
+        emit("transport", "skipped", "No destination yet")
+        return {}
+    if not origin:
+        emit("transport", "skipped", "No starting city: add 'From' to compare flights, trains and buses")
+        return {"transport": None, "findings": {"transport": "Origin unknown; ask the traveller where they start from."}}
+    emit("transport", "running", f"Comparing flights, trains, buses and driving from {origin}")
+    dest_q = f"{dest}, {trip['country']}" if trip.get("country") else dest
+    a, b, guide = await asyncio.gather(asyncio.to_thread(geocode, origin), asyncio.to_thread(geocode, dest_q),
+                                       asyncio.to_thread(get_guide, dest))
+    distance = None
+    if a and b:
+        distance = round(_great_circle_km(a["lat"], a["lon"], b["lat"], b["lon"]))
+    get_in = (guide.get("sections") or {}).get("Get in") or {}
+    notes = "\n".join(f"- {k.lstrip('_')}: {v}" for k, v in get_in.items())[:3200] or "(no guide notes)"
+    month = (trip.get("start_date") or "")[:7] or "the travel dates"
+    prompt = TRANSPORT_PROMPT.format(
+        origin=origin, destination=dest, currency=(trip.get("currency") or "USD").upper(), month=month,
+        distance=f"about {distance} km in a straight line" if distance else "distance unknown", guide=notes)
+    try:
+        plan = await ask_json(structured_llm(), [HumanMessage(prompt)], TransportPlan)
+    except RuntimeError as exc:
+        emit("transport", "error", "Couldn't compare transport options this time")
+        log.warning("transport failed: %s", exc)
+        return {"transport": None}
+    data = plan.model_dump()
+    data.update({"origin": origin, "destination": dest, "distance_km": distance,
+                 "currency": (trip.get("currency") or "USD").upper(), "guide_url": guide.get("url")})
+    available = [m["mode"] for m in data["modes"] if m["available"]]
+    emit("transport", "done", f"{', '.join(available)} compared" + (f" · ~{distance} km" if distance else ""))
+    return {"transport": data}
+
+
+def _great_circle_km(lat1, lon1, lat2, lon2) -> float:
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = p2 - p1, math.radians(lon2 - lon1)
+    h = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 6371 * 2 * math.asin(math.sqrt(h))
+
+
+# ------------------------------------------------------------------ web search
+async def web_agent(state: GraphState) -> dict:
+    trip = state.get("trip") or {}
+    dest = trip.get("destination")
+    if not dest:
+        emit("web", "skipped", "No destination yet")
+        return {}
+    emit("web", "running", f"Searching the web for {dest}")
+    results: list[dict] = []
+    if settings.tavily_api_key:
+        query = f"{dest} travel tips what to know {(trip.get('start_date') or '')[:7]}".strip()
+        try:
+            from langchain_tavily import TavilySearch
+            res = await asyncio.to_thread(
+                TavilySearch(max_results=6, tavily_api_key=settings.tavily_api_key).invoke, {"query": query})
+            if isinstance(res, dict) and not res.get("error"):
+                results = [{"title": r.get("title") or r.get("url"), "url": r.get("url"),
+                            "snippet": (r.get("content") or "")[:400], "source": "web"}
+                           for r in res.get("results", []) if r.get("url")]
+        except Exception as exc:
+            log.warning("web agent search failed: %s", exc)
+    via = "web search"
+    if not results:
+        # No working search key: use the destination's Wikivoyage guide, which is live web content too.
+        guide = await asyncio.to_thread(get_guide, dest)
+        via = "Wikivoyage guide"
+        # Practical sections first; from "Understand" only the overview and climate.
+        for section in ("Stay safe", "Get around", "Cope", "Respect", "Understand", "Climate"):
+            for sub, text in ((guide.get("sections") or {}).get(section) or {}).items():
+                if section == "Understand" and sub not in ("_intro", "Climate"):
+                    continue
+                if len(text) > 80:
+                    title = section if sub == "_intro" else f"{section} · {sub}"
+                    results.append({"title": title, "url": guide.get("url"), "snippet": text[:420],
+                                    "source": "wikivoyage"})
+        results = results[:8]
+    if results:
+        emit("web", "done", f"{len(results)} results via {via}")
+    else:
+        emit("web", "error", "No web results for this destination")
+    return {"web_results": results}
+
+
 SPECIALISTS = {
     "research": research_agent,
     "weather": weather_agent,
     "stays": stays_agent,
     "sights": sights_agent,
+    "transport": transport_agent,
+    "web": web_agent,
     "booking": booking_agent,
 }

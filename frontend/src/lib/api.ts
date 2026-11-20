@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------- types
-export type AgentName = 'supervisor' | 'research' | 'weather' | 'stays' | 'sights' | 'booking' | 'planner' | 'writer'
+export type AgentName = 'supervisor' | 'research' | 'weather' | 'stays' | 'sights' | 'transport' | 'web' | 'booking' | 'planner' | 'writer'
 export type AgentStatus = 'running' | 'done' | 'error' | 'skipped'
 
 export interface AgentEvent {
@@ -35,6 +35,57 @@ export interface Trip {
   currency?: string | null
   style?: string | null
   interests?: string[] | null
+  origin?: string | null
+}
+
+export type TransportModeName = 'flight' | 'train' | 'bus' | 'car' | 'ferry'
+
+export interface TransportMode {
+  mode: TransportModeName
+  label: string | null
+  available: boolean
+  duration: string | null
+  price_min: number | null
+  price_max: number | null
+  frequency: string | null
+  route: string | null
+  book_via: string[]
+  pros: string | null
+  cons: string | null
+  best_for: string | null
+}
+
+export interface Transport {
+  summary: string
+  modes: TransportMode[]
+  recommendation: string | null
+  origin: string
+  destination: string
+  distance_km: number | null
+  currency: string
+  guide_url: string | null
+}
+
+export interface WebResult {
+  title: string
+  url: string
+  snippet: string
+  source: 'web' | 'wikivoyage' | string
+}
+
+export interface OptionDetails {
+  overview: string
+  days: {
+    day: number
+    summary: string
+    meals: { meal: string; place: string; try: string | null; cost: number | null }[]
+    getting_around: string | null
+    spend: number | null
+    tip: string | null
+  }[]
+  booking_checklist: { item: string; when: string; where: string; cost: number | null }[]
+  money_tips: string[]
+  good_to_know: string[]
 }
 
 export interface Place {
@@ -78,7 +129,9 @@ export interface PlanOption {
   total: number
   per_person: number | null
   per_day: number | null
-  breakdown: { stay: number; food: number; transport: number; activities: number; other: number }
+  breakdown: { travel?: number; stay: number; food: number; transport: number; activities: number; other: number }
+  getting_there: { mode: string; detail: string; duration: string | null; cost: number | null } | null
+  details?: OptionDetails
   stay: { place_id: string | null; name: string; nightly: number | null; why: string; place?: Place }
   alt_stays: Place[]
   highlights: string[]
@@ -112,6 +165,9 @@ export interface TripPlan {
   markers: Marker[]
   weather: Weather | null
   stay_candidates: Place[]
+  transport: Transport | null
+  web_results: WebResult[]
+  selected_tier: Tier | null
 }
 
 export interface User {
@@ -134,6 +190,7 @@ export interface Settings {
   dietary: string
   pace: 'relaxed' | 'moderate' | 'packed'
   theme: 'system' | 'light' | 'dark'
+  home_city: string
 }
 
 export interface TripSummary {
@@ -258,6 +315,8 @@ export const api = {
   trip: (id: string) => request<TripDetail>(`/api/trips/${id}`),
   patchTrip: (id: string, body: { title?: string; favorite?: boolean }) => request(`/api/trips/${id}`, json('PATCH', body)),
   deleteTrip: (id: string) => request(`/api/trips/${id}`, json('DELETE')),
+  selectOption: (id: string, tier: Tier) =>
+    request<{ plan: TripPlan; message: string }>(`/api/trips/${id}/select`, json('POST', { tier })),
   exportUrl: (id: string, format: 'pdf' | 'ics' | 'md', option?: Tier) =>
     `/api/trips/${id}/export?format=${format}${option ? `&option=${option}` : ''}`,
 
@@ -334,8 +393,8 @@ export function money(value: number | null | undefined, currency: string | null 
   }
 }
 
-export const TIER_META: Record<Tier, { emoji: string; label: string; blurb: string }> = {
-  budget: { emoji: '💰', label: 'Budget', blurb: 'Cheapest sensible trip' },
-  luxury: { emoji: '💎', label: 'Luxury', blurb: 'Premium comfort' },
-  yours: { emoji: '🎯', label: 'Your budget', blurb: 'Fitted to your range' },
+export const TIER_META: Record<Tier, { emoji: string; label: string; blurb: string; planName: string }> = {
+  budget: { emoji: '💰', label: 'Budget', blurb: 'Cheapest sensible trip', planName: 'Budget plan' },
+  luxury: { emoji: '💎', label: 'Luxury', blurb: 'Premium comfort', planName: 'Luxury plan' },
+  yours: { emoji: '🎯', label: 'Your budget', blurb: 'Fitted to your range', planName: 'budget-matched plan' },
 }

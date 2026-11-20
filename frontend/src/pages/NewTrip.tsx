@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowRight, Calendar, CalendarDays, MapPin, Minus, Plus, Users, Wallet } from 'lucide-react'
+import { ArrowRight, Calendar, CalendarDays, MapPin, Minus, Navigation, Plus, Users, Wallet } from 'lucide-react'
 import { TIER_META, uid } from '../lib/api'
 import { useAuth } from '../lib/auth'
 
@@ -8,10 +8,11 @@ const INTEREST_OPTIONS = ['Beaches', 'Food', 'Temples', 'Museums', 'Nightlife', 
 const CURRENCIES = ['INR', 'USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'SGD', 'AED', 'THB', 'IDR']
 
 export function buildPrompt(f: {
-  destination: string; start: string; days: number; travelers: number; currency: string
+  destination: string; origin: string; start: string; days: number; travelers: number; currency: string
   min: string; max: string; interests: string[]; notes: string
 }) {
   const parts = [`Plan ${f.days} days in ${f.destination.trim()}`]
+  if (f.origin.trim()) parts.push(`travelling from ${f.origin.trim()}`)
   if (f.start) parts.push(`starting ${f.start}`)
   parts.push(`for ${f.travelers} ${f.travelers === 1 ? 'person' : 'people'}`)
   if (f.min && f.max) parts.push(`with a total budget of ${f.min} to ${f.max} ${f.currency}`)
@@ -27,6 +28,7 @@ export function NewTrip() {
   const { settings } = useAuth()
   const navigate = useNavigate()
   const [destination, setDestination] = useState('')
+  const [origin, setOrigin] = useState(settings?.home_city ?? '')
   const [start, setStart] = useState('')
   const [days, setDays] = useState(4)
   const [travelers, setTravelers] = useState(settings?.default_travelers ?? 1)
@@ -45,7 +47,7 @@ export function NewTrip() {
     e.preventDefault()
     if (!destination.trim()) return setError('Where are you going?')
     if (min && max && Number(min) > Number(max)) return setError('The minimum budget is above the maximum.')
-    go(buildPrompt({ destination, start, days, travelers, currency, min, max, interests, notes }))
+    go(buildPrompt({ destination, origin, start, days, travelers, currency, min, max, interests, notes }))
   }
 
   const toggle = (i: string) => setInterests(s => (s.includes(i) ? s.filter(x => x !== i) : [...s, i]))
@@ -70,11 +72,19 @@ export function NewTrip() {
         <p className="mt-2 text-muted">You'll get three plans: {Object.values(TIER_META).map(t => `${t.emoji} ${t.label}`).join(', ')}, each with stays and a day-by-day itinerary.</p>
 
         <form onSubmit={submit} className="mt-8 space-y-6 rounded-2xl border border-line bg-surface p-5 sm:p-7">
-          <label className="block">
-            <span className="flex items-center gap-2 text-sm font-medium"><MapPin className="size-4 text-accent" /> Destination</span>
-            <input className={`${field} mt-2 text-lg`} placeholder="e.g. Goa, Kyoto, Paris, Bali" value={destination}
-              onChange={e => setDestination(e.target.value)} autoFocus maxLength={80} />
-          </label>
+          <div className="grid gap-5 sm:grid-cols-2">
+            <label className="block">
+              <span className="flex items-center gap-2 text-sm font-medium"><Navigation className="size-4 text-accent" /> From</span>
+              <input className={`${field} mt-2 text-lg`} placeholder="e.g. Hyderabad" value={origin}
+                onChange={e => setOrigin(e.target.value)} maxLength={80} autoComplete="address-level2" />
+            </label>
+            <label className="block">
+              <span className="flex items-center gap-2 text-sm font-medium"><MapPin className="size-4 text-accent" /> Destination</span>
+              <input className={`${field} mt-2 text-lg`} placeholder="e.g. Goa, Kyoto, Paris, Bali" value={destination}
+                onChange={e => setDestination(e.target.value)} autoFocus maxLength={80} />
+            </label>
+          </div>
+          <p className="-mt-3 text-xs text-faint">We'll compare flights, trains, buses and driving from your starting city.</p>
 
           <div className="grid gap-5 sm:grid-cols-3">
             <label className="block">

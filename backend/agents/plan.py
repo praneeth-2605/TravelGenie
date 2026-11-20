@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 Tier = Literal["budget", "luxury", "yours"]
 TIER_LABEL = {"budget": "Budget", "luxury": "Luxury", "yours": "Your budget"}
@@ -35,11 +35,19 @@ class PlanDay(BaseModel):
 
 
 class Breakdown(BaseModel):
+    travel: float = Field(0, description="Getting there and back (flight/train/bus), whole party")
     stay: float = 0
     food: float = 0
-    transport: float = 0
+    transport: float = Field(0, description="Local transport at the destination")
     activities: float = 0
     other: float = 0
+
+
+class GettingThere(BaseModel):
+    mode: str = Field(description="flight, train, bus, car or ferry")
+    detail: str = Field(description="e.g. '3AC sleeper on the Goa Express, Hyderabad → Madgaon'")
+    duration: str | None = None
+    cost: float | None = Field(None, description="Round trip for the whole party")
 
 
 class StayPick(BaseModel):
@@ -54,6 +62,7 @@ class PlanOption(BaseModel):
     title: str = Field(description="Short catchy name, e.g. 'Backpacker beach life'")
     total: float = Field(description="Total trip cost for the whole party, plan currency")
     breakdown: Breakdown
+    getting_there: GettingThere | None = Field(None, description="How this option travels to the destination")
     stay: StayPick
     alt_stay_ids: list[str] | None = Field(None, description="1-2 other suitable candidate stay ids")
     highlights: list[str] = Field(default_factory=list, description="How this option differs: dining, transport, extras")
@@ -82,9 +91,60 @@ class TripPlan(BaseModel):
     def _none_list(cls, v):
         return v or []
 
+    @model_validator(mode="after")
+    def _three_options(self):
+        tiers = sorted(o.tier for o in self.options)
+        if tiers != ["budget", "luxury", "yours"]:
+            raise ValueError(f"options must be exactly budget, luxury and yours; got {tiers}")
+        return self
+
+
+class Meal(BaseModel):
+    meal: str = Field(description="Breakfast, Lunch, Dinner or Snack")
+    place: str = Field(description="Specific restaurant, shack, market or area")
+    try_: str | None = Field(None, alias="try", description="What to order")
+    cost: float | None = Field(None, description="For the whole party")
+
+    model_config = {"populate_by_name": True}
+
+
+class DetailDay(BaseModel):
+    day: int
+    summary: str = Field(description="One line: the feel of the day in this option")
+    meals: list[Meal] = Field(default_factory=list)
+    getting_around: str | None = Field(None, description="How to move between today's stops, with costs")
+    spend: float | None = Field(None, description="Total spend today for the whole party")
+    tip: str | None = None
+
+    @field_validator("meals", mode="before")
+    @classmethod
+    def _none_list(cls, v):
+        return v or []
+
+
+class BookingStep(BaseModel):
+    item: str = Field(description="What to book, e.g. 'Train tickets Hyderabad → Madgaon'")
+    when: str = Field(description="When to book, e.g. '60 days ahead (IRCTC opens bookings then)'")
+    where: str = Field(description="Where/how to book")
+    cost: float | None = None
+
+
+class OptionDetails(BaseModel):
+    overview: str = Field(description="3-4 sentences on what this option is like to live")
+    days: list[DetailDay]
+    booking_checklist: list[BookingStep] = Field(default_factory=list)
+    money_tips: list[str] = Field(default_factory=list)
+    good_to_know: list[str] = Field(default_factory=list)
+
+    @field_validator("booking_checklist", "money_tips", "good_to_know", mode="before")
+    @classmethod
+    def _none_list(cls, v):
+        return v or []
+
 
 def enrich(plan: TripPlan, trip: dict, stays: list[dict], sights: list[dict],
-           sources: list[dict], center: dict | None, weather: dict | None) -> dict:
+           sources: list[dict], center: dict | None, weather: dict | None,
+           transport: dict | None = None, web_results: list[dict] | None = None) -> dict:
     """Attach real place data (coords, prices, links) and dates to the plan."""
     by_id = {p["id"]: p for p in [*stays, *sights]}
     data = plan.model_dump()
@@ -130,6 +190,8 @@ def enrich(plan: TripPlan, trip: dict, stays: list[dict], sights: list[dict],
     data["markers"] = list(markers.values())
     data["weather"] = weather
     data["stay_candidates"] = [_place_public(s) for s in stays]
+    data["transport"] = transport
+    data["web_results"] = web_results or []
     return data
 
 
@@ -162,11 +224,17 @@ def to_markdown(plan: dict) -> str:
     lines.append("")
     for o in plan.get("options", []):
         b = o["breakdown"]
+        gt = o.get("getting_there") or {}
         lines += [f"### {o['label']} — {o['title']}",
-                  f"**Total {money(o['total'], cur)}** · stay {money(b['stay'], cur)} · food {money(b['food'], cur)} · "
+                  f"**Total {money(o['total'], cur)}** · travel {money(b.get('travel'), cur)} · "
+                  f"stay {money(b['stay'], cur)} · food {money(b['food'], cur)} · "
                   f"transport {money(b['transport'], cur)} · activities {money(b['activities'], cur)} · "
-                  f"other {money(b['other'], cur)}",
-                  f"- Stay: **{o['stay']['name']}**" + (f" ({money(o['stay'].get('nightly'), cur)}/night)" if o['stay'].get('nightly') else "")
+                  f"other {money(b['other'], cur)}"]
+        if gt:
+            lines.append(f"- Getting there: **{gt['mode'].title()}**: {gt['detail']}"
+                         + (f" ({gt['duration']})" if gt.get("duration") else "")
+                         + (f", {money(gt.get('cost'), cur)} return" if gt.get("cost") else ""))
+        lines += [f"- Stay: **{o['stay']['name']}**" + (f" ({money(o['stay'].get('nightly'), cur)}/night)" if o['stay'].get('nightly') else "")
                   + (f" — {o['stay']['why']}" if o['stay'].get('why') else "")]
         lines += [f"- {h}" for h in o.get("highlights", [])]
         if o.get("note"):
@@ -183,6 +251,36 @@ def to_markdown(plan: dict) -> str:
             lines.append(f"- **{it['time']}:** {it['title']}{cost} {cite}".rstrip())
             if it.get("description"):
                 lines.append(f"  {it['description']}")
+        lines.append("")
+
+    chosen = next((o for o in plan.get("options", []) if o.get("details") and o["tier"] == plan.get("selected_tier")), None)
+    if chosen:
+        det = chosen["details"]
+        lines += [f"## Your plan: {chosen['label']} — {chosen['title']}", "", det["overview"], ""]
+        for dd in det["days"]:
+            lines.append(f"**Day {dd['day']}:** {dd['summary']}" + (f" · spend {money(dd.get('spend'), cur)}" if dd.get("spend") else ""))
+            for m in dd.get("meals", []):
+                lines.append(f"- {m['meal']}: {m['place']}" + (f" ({m['try']})" if m.get("try") else "")
+                             + (f" · {money(m.get('cost'), cur)}" if m.get("cost") else ""))
+            if dd.get("getting_around"):
+                lines.append(f"- Getting around: {dd['getting_around']}")
+            lines.append("")
+        if det.get("booking_checklist"):
+            lines += ["### Booking checklist", *[f"- [ ] {b['item']}: {b['when']}, via {b['where']}"
+                                                + (f" ({money(b.get('cost'), cur)})" if b.get("cost") else "")
+                                                for b in det["booking_checklist"]], ""]
+
+    if plan.get("transport") and plan["transport"].get("modes"):
+        t = plan["transport"]
+        lines += [f"## Getting there from {t.get('origin')}", t.get("summary", ""), ""]
+        for m in t["modes"]:
+            if not m.get("available"):
+                continue
+            price = (f"{money(m.get('price_min'), t.get('currency'))}–{money(m.get('price_max'), t.get('currency'))}"
+                     if m.get("price_min") is not None else "")
+            lines.append(f"- **{m['mode'].title()}**: {m.get('duration') or ''} · {price} per person one way"
+                         + (f" · {m['route']}" if m.get("route") else "")
+                         + (f" · book via {', '.join(m['book_via'])}" if m.get("book_via") else ""))
         lines.append("")
 
     if plan.get("weather_note"):

@@ -154,6 +154,7 @@ class SettingsBody(BaseModel):
     dietary: str | None = Field(None, max_length=120)
     pace: Literal["relaxed", "moderate", "packed"] | None = None
     theme: Literal["system", "light", "dark"] | None = None
+    home_city: str | None = Field(None, max_length=80)
 
 
 @router.get("/settings")

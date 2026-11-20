@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import {
-  AlertTriangle, BedDouble, Check, ChevronDown, CloudSun, Compass, Landmark, Loader2, MinusCircle, PenLine, Route, Search, Ticket,
+  AlertTriangle, BedDouble, Check, ChevronDown, CloudSun, Compass, Globe, Landmark, Loader2, MinusCircle, PenLine, Route, Search, Ticket,
+  TrainFront,
 } from 'lucide-react'
 import type { AgentEvent, AgentName } from '../lib/api'
 
@@ -10,6 +11,8 @@ export const META: Record<AgentName, { label: string; icon: typeof Search; job: 
   weather: { label: 'Weather', icon: CloudSun, job: 'Checks the forecast or seasonal norms' },
   stays: { label: 'Stays', icon: BedDouble, job: 'Finds real hostels and hotels by price' },
   sights: { label: 'Sightseeing', icon: Landmark, job: 'Finds local sights and activities' },
+  transport: { label: 'Transport', icon: TrainFront, job: 'Compares flights, trains, buses and driving' },
+  web: { label: 'Web search', icon: Globe, job: 'Finds what to know before you go' },
   booking: { label: 'Booking', icon: Ticket, job: 'Makes simulated bookings' },
   planner: { label: 'Planner', icon: Route, job: 'Builds 3 budget options and your day plan' },
   writer: { label: 'Writer', icon: PenLine, job: 'Writes a cited answer' },
