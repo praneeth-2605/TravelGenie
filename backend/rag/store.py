@@ -1,18 +1,21 @@
-"""Hybrid knowledge store: ChromaDB (dense vectors) + BM25 (keywords).
+"""Hybrid knowledge store: dense vectors + BM25 (keywords).
 
 Dense search catches paraphrases ("cheap eats" ~ "budget street food");
 BM25 catches exact terms dense models blur (place names, "e-visa", "Line 3").
-Both read the same chunks, which live in Chroma; the BM25 index is rebuilt
-in memory whenever the collection changes.
+
+Two backends with the same interface:
+- PgVectorStore: PostgreSQL + pgvector (production, e.g. Neon), when DATABASE_URL is set
+- KnowledgeStore: local ChromaDB files in storage/chroma (development)
+The BM25 index is rebuilt in memory whenever the chunks change.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import threading
 from dataclasses import dataclass
 
-import chromadb
 from rank_bm25 import BM25Okapi
 
 from backend.config import settings
@@ -37,6 +40,8 @@ class Hit:
 
 class KnowledgeStore:
     def __init__(self) -> None:
+        import chromadb  # only needed for the local backend
+
         settings.chroma_dir.mkdir(parents=True, exist_ok=True)
         self._client = chromadb.PersistentClient(path=str(settings.chroma_dir))
         self._col = self._client.get_or_create_collection(
@@ -171,13 +176,157 @@ def _matches(meta: dict, where: dict) -> bool:
     return True
 
 
-_store: KnowledgeStore | None = None
+class PgVectorStore:
+    """The same store on PostgreSQL + pgvector, so the knowledge base (including
+    uploads) lives in the cloud database and survives server restarts."""
+
+    def __init__(self) -> None:
+        from backend import db
+
+        self._db = db
+        dim = len(models.embed_query("dimension probe"))
+        with db.tx() as c:
+            c.execute("CREATE EXTENSION IF NOT EXISTS vector")
+            c.execute(f"""CREATE TABLE IF NOT EXISTS kb_chunks (
+                id TEXT PRIMARY KEY, doc_id TEXT NOT NULL, text TEXT NOT NULL,
+                metadata JSONB NOT NULL, embedding vector({dim}) NOT NULL)""")
+            c.execute("CREATE INDEX IF NOT EXISTS kb_chunks_doc ON kb_chunks (doc_id)")
+            c.execute("CREATE INDEX IF NOT EXISTS kb_chunks_hnsw ON kb_chunks USING hnsw (embedding vector_cosine_ops)")
+        self._lock = threading.RLock()
+        self._bm25: BM25Okapi | None = None
+        self._bm25_rows: list[Hit] = []
+        self._dirty = True
+
+    @staticmethod
+    def _vec(v: list[float]) -> str:
+        return "[" + ",".join(f"{x:.6f}" for x in v) + "]"
+
+    @staticmethod
+    def _where(where: dict | None) -> tuple[str, list]:
+        """Translate the small Chroma-style filter subset we use into SQL."""
+        if not where:
+            return "TRUE", []
+        clauses, params = [], []
+        for key, cond in where.items():
+            if key == "$and":
+                for sub in cond:
+                    c, p = PgVectorStore._where(sub)
+                    clauses.append(c)
+                    params += p
+            elif key == "doc_id":
+                clauses.append("doc_id = ?")
+                params.append(cond)
+            else:
+                clauses.append("metadata->>? = ?")
+                params += [key, str(cond)]
+        return " AND ".join(clauses) or "TRUE", params
+
+    @staticmethod
+    def _meta(value) -> dict:
+        return value if isinstance(value, dict) else json.loads(value)
+
+    # ---------- writes ----------
+    def upsert(self, chunks: list[Chunk]) -> int:
+        if not chunks:
+            return 0
+        for i in range(0, len(chunks), 64):
+            batch = chunks[i:i + 64]
+            vectors = models.embed_documents([c.embed_text for c in batch])
+            with self._db.tx() as tx:
+                for c, v in zip(batch, vectors):
+                    tx.execute(
+                        "INSERT INTO kb_chunks (id, doc_id, text, metadata, embedding) VALUES (?, ?, ?, ?::jsonb, ?::vector) "
+                        "ON CONFLICT (id) DO UPDATE SET doc_id = EXCLUDED.doc_id, text = EXCLUDED.text, "
+                        "metadata = EXCLUDED.metadata, embedding = EXCLUDED.embedding",
+                        (c.id, c.metadata["doc_id"], c.text, json.dumps(c.metadata), self._vec(v)))
+        self._dirty = True
+        return len(chunks)
+
+    def delete_document(self, doc_id: str) -> None:
+        self.delete_where({"doc_id": doc_id})
+
+    def delete_where(self, where: dict) -> None:
+        clause, params = self._where(where)
+        with self._db.tx() as tx:
+            tx.execute(f"DELETE FROM kb_chunks WHERE {clause}", params)
+        self._dirty = True
+
+    # ---------- reads ----------
+    def count(self) -> int:
+        return self._db.connect().execute("SELECT count(*) AS n FROM kb_chunks").fetchone()["n"]
+
+    def has_doc(self, doc_id: str) -> bool:
+        return self._db.connect().execute("SELECT 1 FROM kb_chunks WHERE doc_id = ? LIMIT 1", (doc_id,)).fetchone() is not None
+
+    def _all_meta(self) -> list[dict]:
+        return [self._meta(r["metadata"]) for r in self._db.connect().execute("SELECT metadata FROM kb_chunks").fetchall()]
+
+    def documents(self) -> list[dict]:
+        docs: dict[str, dict] = {}
+        for meta in self._all_meta():
+            d = docs.setdefault(meta["doc_id"], {
+                "doc_id": meta["doc_id"], "source": meta.get("source"),
+                "title": meta.get("title") or meta.get("source"), "source_type": meta.get("source_type"),
+                "destination": meta.get("destination"), "created_at": meta.get("created_at"), "chunks": 0,
+            })
+            d["chunks"] += 1
+        return sorted(docs.values(), key=lambda d: (d["source_type"] or "", d["title"] or ""))
+
+    def destinations(self) -> set[str]:
+        rows = self._db.connect().execute(
+            "SELECT DISTINCT metadata->>'destination' AS d FROM kb_chunks "
+            "WHERE metadata->>'destination' IS NOT NULL").fetchall()
+        return {r["d"] for r in rows if r["d"]}
+
+    def get_neighbors(self, hit: Hit) -> list[Hit]:
+        idx = hit.metadata.get("chunk_index")
+        if idx is None:
+            return []
+        ids = [f"{hit.metadata['doc_id']}-{idx - 1}", f"{hit.metadata['doc_id']}-{idx + 1}"]
+        rows = self._db.connect().execute("SELECT id, text, metadata FROM kb_chunks WHERE id IN (?, ?)", ids).fetchall()
+        return [Hit(r["id"], r["text"], self._meta(r["metadata"])) for r in rows]
+
+    def dense_search(self, query: str, k: int = 20, where: dict | None = None) -> list[Hit]:
+        clause, params = self._where(where)
+        vec = self._vec(models.embed_query(query))
+        rows = self._db.connect().execute(
+            f"SELECT id, text, metadata, 1 - (embedding <=> ?::vector) AS score FROM kb_chunks "
+            f"WHERE {clause} ORDER BY embedding <=> ?::vector LIMIT ?",
+            [vec, *params, vec, k]).fetchall()
+        return [Hit(r["id"], r["text"], self._meta(r["metadata"]), float(r["score"])) for r in rows]
+
+    def keyword_search(self, query: str, k: int = 20, where: dict | None = None) -> list[Hit]:
+        with self._lock:
+            if self._dirty:
+                rows = self._db.connect().execute("SELECT id, text, metadata FROM kb_chunks").fetchall()
+                self._bm25_rows = [Hit(r["id"], r["text"], self._meta(r["metadata"])) for r in rows]
+                corpus = [tokenize(f"{h.metadata.get('section', '')} {h.text}") for h in self._bm25_rows]
+                self._bm25 = BM25Okapi(corpus) if corpus else None
+                self._dirty = False
+            if not self._bm25:
+                return []
+            scores = self._bm25.get_scores(tokenize(query))
+            rows = self._bm25_rows
+        ranked = sorted(zip(scores, rows), key=lambda x: x[0], reverse=True)
+        out = []
+        for score, row in ranked:
+            if score <= 0:
+                break
+            if where and not _matches(row.metadata, where):
+                continue
+            out.append(Hit(row.id, row.text, row.metadata, float(score)))
+            if len(out) >= k:
+                break
+        return out
+
+
+_store = None
 _store_lock = threading.Lock()
 
 
-def get_store() -> KnowledgeStore:
+def get_store():
     global _store
     with _store_lock:
         if _store is None:
-            _store = KnowledgeStore()
+            _store = PgVectorStore() if settings.database_url else KnowledgeStore()
         return _store

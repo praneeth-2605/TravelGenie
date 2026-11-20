@@ -24,9 +24,13 @@ ALGORITHM = "HS256"
 
 
 def _secret() -> str:
-    """SECRET_KEY from .env, else one generated once and kept in storage/."""
+    """SECRET_KEY from .env, else one generated once and kept in storage/.
+    In production (DATABASE_URL set) SECRET_KEY is required: the server's disk is
+    wiped on restart, and a new key would log everyone out."""
     if settings.secret_key:
         return settings.secret_key
+    if settings.database_url:
+        raise RuntimeError("SECRET_KEY must be set when DATABASE_URL is set (production).")
     path = ROOT / "storage" / "secret.key"
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
@@ -79,14 +83,20 @@ def issue_session(response: Response, user) -> None:
         "exp": int(time.time()) + SESSION_DAYS * 86400,
     }
     token = jwt.encode(payload, SECRET, algorithm=ALGORITHM)
-    response.set_cookie(
-        COOKIE, token, max_age=SESSION_DAYS * 86400, httponly=True,
-        samesite="lax", secure=settings.cookie_secure, path="/",
-    )
+    response.set_cookie(COOKIE, token, max_age=SESSION_DAYS * 86400, **_cookie_flags())
+
+
+def _cookie_flags() -> dict:
+    # Over HTTPS (production) SameSite=None lets the cookie work when the app is shown
+    # inside Hugging Face's page (an iframe); cross-site writes are blocked by the
+    # Origin check in the API. Locally, plain Lax.
+    if settings.cookie_secure:
+        return {"httponly": True, "secure": True, "samesite": "none", "path": "/"}
+    return {"httponly": True, "secure": False, "samesite": "lax", "path": "/"}
 
 
 def clear_session(response: Response) -> None:
-    response.delete_cookie(COOKIE, path="/")
+    response.delete_cookie(COOKIE, **_cookie_flags())
 
 
 def current_user_optional(request: Request):

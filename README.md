@@ -1,3 +1,14 @@
+---
+title: TravelGenie
+emoji: 🌍
+colorFrom: yellow
+colorTo: red
+sdk: docker
+app_port: 7860
+pinned: false
+short_description: Multi-agent AI travel planner with RAG
+---
+
 # 🌍 TravelGenie — Multi-Agent AI Travel Planner
 
 Tell TravelGenie where you're going and for how long. A team of AI agents finds **real hostels, hotels and sights**, checks the weather, researches the destination, and builds **three complete trip options**, each with a day-by-day itinerary:
@@ -124,9 +135,52 @@ npm run dev
 
 Open **http://localhost:5173** and create an account.
 
-### Production build
+---
 
-Run `npm run build` inside `frontend/`; FastAPI then serves the app at http://localhost:8000. Set `COOKIE_SECURE=true` and a fixed `SECRET_KEY` when deploying behind HTTPS.
+## ☁️ Deploy (Hugging Face Spaces + Neon, free)
+
+In production nothing is stored on a laptop: the app runs on **Hugging Face Spaces** (Docker) and all data
+(accounts, settings, trips, chats and the knowledge base) lives in **Neon** PostgreSQL with pgvector.
+
+| Where | What |
+|---|---|
+| Hugging Face Space | Runs the container from the `Dockerfile` (React app + FastAPI + AI models) |
+| Neon | Users, settings, trips, chat history, knowledge-base vectors |
+
+### 1. Create the database (Neon)
+1. Sign up at [neon.tech](https://neon.tech) and create a project (pick the region closest to your users).
+2. Open **Connect** and copy the connection string (`postgresql://…?sslmode=require`).
+
+TravelGenie creates its tables and enables `pgvector` on first start.
+
+### 2. Create the Space (Hugging Face)
+1. Sign up at [huggingface.co](https://huggingface.co), then **New Space** → name `travelgenie` → SDK **Docker** → **Blank** → hardware **CPU basic (free)**.
+2. In the Space: **Settings → Variables and secrets → New secret** and add:
+
+| Secret | Value |
+|---|---|
+| `GROQ_API_KEY` | your Groq key |
+| `DATABASE_URL` | the Neon connection string |
+| `SECRET_KEY` | a long random string: `python3 -c "import secrets; print(secrets.token_urlsafe(48))"` |
+| `OPENWEATHERMAP_API_KEY` | optional, live forecasts |
+| `TAVILY_API_KEY` | optional, web search |
+| `GOOGLE_CLIENT_ID` | optional, Google sign-in (add your Space URL to the OAuth client's JavaScript origins) |
+
+### 3. Push the code to the Space
+Create a **write** access token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens), then:
+
+```bash
+git remote add hf https://huggingface.co/spaces/<your-username>/travelgenie
+git push --force hf main
+```
+
+When asked for a password, paste the access token. (`--force` replaces the Space's empty template on the first push; later pushes are a normal `git push hf main`.)
+
+The Space builds the image (about 5–10 minutes) and starts at `https://<your-username>-travelgenie.hf.space`.
+
+### Notes
+- Free Spaces sleep after ~48 hours without visitors and wake on the next visit (about a minute). Neon wakes automatically.
+- Locally, leave `DATABASE_URL` empty to keep using files in `storage/` for development.
 
 ---
 

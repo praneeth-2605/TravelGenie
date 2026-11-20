@@ -14,12 +14,12 @@ from backend.config import settings
 
 @lru_cache
 def _embedder() -> TextEmbedding:
-    return TextEmbedding(settings.embed_model)
+    return TextEmbedding(settings.embed_model, cache_dir=settings.model_cache)
 
 
 @lru_cache
 def _reranker() -> TextCrossEncoder:
-    return TextCrossEncoder(settings.rerank_model)
+    return TextCrossEncoder(settings.rerank_model, cache_dir=settings.model_cache)
 
 
 def embed_documents(texts: list[str]) -> list[list[float]]:

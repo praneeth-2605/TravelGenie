@@ -1,7 +1,11 @@
-"""App database (SQLite): users, settings and trips.
+"""App database: users, settings and trips.
 
-Conversation messages live in LangGraph's checkpointer (storage/threads.sqlite);
-this database holds everything the dashboard needs.
+Two backends, same code:
+- PostgreSQL when DATABASE_URL is set (production, e.g. Neon): data lives in the cloud
+- SQLite in storage/app.sqlite otherwise (local development)
+
+Queries are written once with `?` placeholders; the Postgres adapter converts
+them. Conversation messages live in LangGraph's checkpointer (same database).
 """
 
 from __future__ import annotations
@@ -13,10 +17,104 @@ import time
 import uuid
 from contextlib import contextmanager
 
-from backend.config import ROOT
+from backend.config import ROOT, settings
 
 DB_PATH = ROOT / "storage" / "app.sqlite"
+USE_PG = bool(settings.database_url)
 _local = threading.local()
+
+PG_SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    id            TEXT PRIMARY KEY,
+    email         TEXT NOT NULL,
+    name          TEXT NOT NULL,
+    password_hash TEXT,
+    google_sub    TEXT UNIQUE,
+    avatar_url    TEXT,
+    token_version INTEGER NOT NULL DEFAULT 0,
+    created_at    BIGINT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower ON users (lower(email));
+CREATE TABLE IF NOT EXISTS user_settings (
+    user_id           TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    home_currency     TEXT NOT NULL DEFAULT 'INR',
+    travel_style      TEXT NOT NULL DEFAULT 'balanced',
+    default_travelers INTEGER NOT NULL DEFAULT 1,
+    budget_min        DOUBLE PRECISION,
+    budget_max        DOUBLE PRECISION,
+    interests         TEXT NOT NULL DEFAULT '[]',
+    dietary           TEXT NOT NULL DEFAULT '',
+    pace              TEXT NOT NULL DEFAULT 'moderate',
+    theme             TEXT NOT NULL DEFAULT 'system',
+    home_city         TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS trips (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title         TEXT NOT NULL,
+    destination   TEXT,
+    start_date    TEXT,
+    days          INTEGER,
+    plan          TEXT,
+    favorite      INTEGER NOT NULL DEFAULT 0,
+    selected_tier TEXT,
+    created_at    BIGINT NOT NULL,
+    updated_at    BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS trips_by_user ON trips(user_id, updated_at DESC);
+"""
+
+
+# ------------------------------------------------------------------ Postgres adapter
+class _Result:
+    """Rows fetched eagerly, so the pooled connection can be returned at once."""
+
+    def __init__(self, cur):
+        self.rowcount = cur.rowcount
+        self._rows = cur.fetchall() if cur.description else []
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self):
+        return self._rows
+
+    def __iter__(self):
+        return iter(self._rows)
+
+
+class _PgConn:
+    def __init__(self, conn=None):
+        self._conn = conn  # set inside a transaction; otherwise borrow per statement
+
+    def execute(self, sql: str, params=()):
+        sql = sql.replace("?", "%s")
+        if self._conn is not None:
+            return _Result(self._conn.execute(sql, params))
+        with _pool().connection() as conn:
+            return _Result(conn.execute(sql, params))
+
+
+_pg_pool = None
+_pg_lock = threading.Lock()
+
+
+def _pool():
+    global _pg_pool
+    with _pg_lock:
+        if _pg_pool is None:
+            from psycopg.rows import dict_row
+            from psycopg_pool import ConnectionPool
+            _pg_pool = ConnectionPool(
+                settings.database_url, min_size=1, max_size=6, open=True,
+                # prepare_threshold=None: no server-side prepared statements, so Neon's
+                # pooled (PgBouncer) connection string works too.
+                kwargs={"row_factory": dict_row, "autocommit": True, "prepare_threshold": None},
+                # Serverless Postgres (Neon) drops idle connections; check before use.
+                check=ConnectionPool.check_connection,
+            )
+        return _pg_pool
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -57,7 +155,9 @@ CREATE INDEX IF NOT EXISTS trips_by_user ON trips(user_id, updated_at DESC);
 """
 
 
-def connect() -> sqlite3.Connection:
+def connect():
+    if USE_PG:
+        return _PgConn()
     conn = getattr(_local, "conn", None)
     if conn is None:
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -71,6 +171,11 @@ def connect() -> sqlite3.Connection:
 
 @contextmanager
 def tx():
+    if USE_PG:
+        with _pool().connection() as conn:
+            with conn.transaction():
+                yield _PgConn(conn)
+        return
     conn = connect()
     try:
         yield conn
@@ -88,6 +193,10 @@ MIGRATIONS = [
 
 
 def init() -> None:
+    if USE_PG:
+        with _pool().connection() as conn:
+            conn.execute(PG_SCHEMA)
+        return
     with tx() as c:
         c.executescript(SCHEMA)
         for table, column, definition in MIGRATIONS:
@@ -106,7 +215,7 @@ def now() -> int:
 
 # ------------------------------------------------------------------ users
 def user_by_email(email: str) -> sqlite3.Row | None:
-    return connect().execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+    return connect().execute("SELECT * FROM users WHERE lower(email) = lower(?)", (email,)).fetchone()
 
 
 def user_by_id(user_id: str) -> sqlite3.Row | None:

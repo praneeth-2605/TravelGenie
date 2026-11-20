@@ -19,6 +19,10 @@ langgraph>=1.0
 langgraph-checkpoint-sqlite>=2.0
 aiosqlite>=0.20
 
+# Production storage (Neon / any PostgreSQL with pgvector)
+psycopg[binary,pool]>=3.2
+langgraph-checkpoint-postgres>=2.0
+
 # RAG
 chromadb>=1.0
 fastembed>=0.4

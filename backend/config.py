@@ -40,11 +40,20 @@ class Settings:
     # Web results older than this are ignored by the cache (days).
     web_cache_ttl_days: int = 14
 
+    # Storage: PostgreSQL (e.g. Neon) when set; local SQLite + Chroma files otherwise.
+    database_url: str | None = _key("DATABASE_URL")
+    # Where the embedding/reranker models are cached (baked into the Docker image).
+    model_cache: str | None = os.getenv("MODEL_CACHE_DIR")
+
     # Auth
     secret_key: str | None = _key("SECRET_KEY")
     google_client_id: str | None = _key("GOOGLE_CLIENT_ID")
-    # Set COOKIE_SECURE=true when served over HTTPS (production).
+    # Set COOKIE_SECURE=true when served over HTTPS (production). It also switches the
+    # session cookie to SameSite=None so login works inside Hugging Face's embedded page.
     cookie_secure: bool = os.getenv("COOKIE_SECURE", "false").lower() == "true"
+    # Public origin(s) of the deployed site, for the cross-site request check.
+    public_origins: list[str] = field(
+        default_factory=lambda: [o.strip() for o in os.getenv("PUBLIC_ORIGINS", "").split(",") if o.strip()])
 
     cors_origins: list[str] = field(
         default_factory=lambda: os.getenv(

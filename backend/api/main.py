@@ -16,9 +16,9 @@ import re
 from contextlib import asynccontextmanager
 from typing import Literal
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
@@ -51,14 +51,55 @@ async def lifespan(app: FastAPI):
     await asyncio.to_thread(models.warm_up)
     added = await asyncio.to_thread(seed_guides)
     log.info("knowledge base ready: %d chunks (%d new)", get_store().count(), added)
-    async with AsyncSqliteSaver.from_conn_string(str(ROOT / "storage" / "threads.sqlite")) as saver:
-        app.state.graph = build_graph(saver)
-        yield
+    if settings.database_url:
+        # Chat history in Postgres (Neon). A pool with health checks, because
+        # serverless Postgres closes idle connections when it scales to zero.
+        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+        from psycopg.rows import dict_row
+        from psycopg_pool import AsyncConnectionPool
+
+        pool = AsyncConnectionPool(settings.database_url, min_size=1, max_size=6, open=False,
+                                   kwargs={"autocommit": True, "prepare_threshold": None, "row_factory": dict_row},
+                                   check=AsyncConnectionPool.check_connection)
+        await pool.open()
+        try:
+            saver = AsyncPostgresSaver(pool)
+            await saver.setup()
+            app.state.graph = build_graph(saver)
+            log.info("storage: PostgreSQL (users, trips, chats, knowledge base)")
+            yield
+        finally:
+            await pool.close()
+    else:
+        async with AsyncSqliteSaver.from_conn_string(str(ROOT / "storage" / "threads.sqlite")) as saver:
+            app.state.graph = build_graph(saver)
+            log.info("storage: local files in storage/")
+            yield
 
 
 app = FastAPI(title="TravelGenie", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_credentials=True,
                    allow_methods=["*"], allow_headers=["*"])
+
+_UNSAFE = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+@app.middleware("http")
+async def block_cross_site_writes(request: Request, call_next):
+    """CSRF guard: the session cookie is SameSite=None in production (so login works
+    inside Hugging Face's embedded page), so reject state-changing requests that a
+    browser sends from any other site."""
+    if request.method in _UNSAFE and request.url.path.startswith("/api/"):
+        origin = request.headers.get("origin")
+        if origin:
+            own = f"{request.url.scheme}://{request.url.netloc}"
+            forwarded = request.headers.get("x-forwarded-host")
+            allowed = {own, *settings.cors_origins, *settings.public_origins}
+            if forwarded:
+                allowed.add(f"https://{forwarded}")
+            if origin not in allowed:
+                return JSONResponse({"detail": "Cross-site request blocked."}, status_code=403)
+    return await call_next(request)
 app.include_router(account_router)
 
 

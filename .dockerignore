@@ -1,0 +1,15 @@
+# Keep the image small and secrets out of it
+.git
+.env
+.env.*
+!.env.example
+venv/
+storage/
+**/__pycache__/
+*.pyc
+frontend/node_modules/
+frontend/dist/
+.claude/
+.vscode/
+.idea/
+.DS_Store
