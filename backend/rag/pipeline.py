@@ -112,12 +112,14 @@ def _fresh(hit: Hit) -> bool:
     return age_days <= settings.web_cache_ttl_days
 
 
-def hybrid_retrieve(queries: list[str], where: dict | None, per_list: int = 20) -> list[Hit]:
+def hybrid_retrieve(queries: list[str], where: dict | None, per_list: int = 20,
+                    viewer: str | None = None) -> list[Hit]:
     store = get_store()
     fused: dict[str, float] = {}
     hits: dict[str, Hit] = {}
     for q in queries:
-        for ranked in (store.dense_search(q, per_list, where), store.keyword_search(q, per_list, where)):
+        for ranked in (store.dense_search(q, per_list, where, viewer),
+                       store.keyword_search(q, per_list, where, viewer)):
             for rank, h in enumerate(ranked):
                 if not _fresh(h):
                     continue
@@ -196,7 +198,9 @@ def expand(hits: list[Hit]) -> list[Hit]:
 
 # ---------------------------------------------------------------- orchestration
 def retrieve(question: str, top_n: int = 6, allow_web: bool = True,
-             destination: str | None = None, rewrite: bool = True) -> RetrievalResult:
+             destination: str | None = None, rewrite: bool = True,
+             viewer: str | None = None) -> RetrievalResult:
+    """`viewer` is the user id: their own uploads are searched along with public content."""
     store = get_store()
     queries, guessed = understand_query(question) if rewrite else ([question], None)
     destination = normalize_destination(destination) or guessed
@@ -205,9 +209,9 @@ def retrieve(question: str, top_n: int = 6, allow_web: bool = True,
 
     where = _where(destination, store.destinations())
     result.trace.append(f"filter: {where or 'none'}")
-    candidates = hybrid_retrieve(queries, where)
+    candidates = hybrid_retrieve(queries, where, viewer=viewer)
     if where and len(candidates) < top_n:  # filter too narrow — widen
-        candidates += [h for h in hybrid_retrieve(queries, None) if h.id not in {c.id for c in candidates}]
+        candidates += [h for h in hybrid_retrieve(queries, None, viewer=viewer) if h.id not in {c.id for c in candidates}]
     result.trace.append(f"fused candidates: {len(candidates)}")
 
     best = rerank(queries, candidates[:40], top_n)

@@ -50,11 +50,12 @@ async def research_agent(state: GraphState) -> dict:
     dest = trip.get("destination")
     request = _latest_request(state)
 
-    jobs = [asyncio.to_thread(retrieve, request, 5, True, dest)]
+    viewer = (state.get("profile") or {}).get("user_id")  # their own uploads + public guides
+    jobs = [asyncio.to_thread(retrieve, request, 5, True, dest, True, viewer)]
     if dest and state.get("intent") == "plan":
         interests = ", ".join(trip.get("interests") or [])
         angle = f"top things to do, neighbourhoods and food in {dest} {interests}".strip()
-        jobs.append(asyncio.to_thread(retrieve, angle, 5, True, dest, False))
+        jobs.append(asyncio.to_thread(retrieve, angle, 5, True, dest, False, viewer))
     results = await asyncio.gather(*jobs)
 
     seen, sources = set(), []

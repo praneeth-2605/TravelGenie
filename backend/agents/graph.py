@@ -71,7 +71,7 @@ async def supervisor(state: GraphState) -> dict:
     profile = state.get("profile") or {}
     prompt = SUPERVISOR_PROMPT.format(
         today=date.today().isoformat(),
-        profile=json.dumps({k: v for k, v in profile.items() if v not in (None, "", [])}),
+        profile=json.dumps({k: v for k, v in profile.items() if v not in (None, "", []) and k != "user_id"}),
         trip=json.dumps(state.get("trip") or {}),
         has_plan="yes" if state.get("plan") else "no",
     )

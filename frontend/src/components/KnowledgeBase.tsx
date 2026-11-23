@@ -80,8 +80,9 @@ export function KnowledgeBase() {
       <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6">
         <h1 className="font-serif text-3xl font-semibold tracking-tight">Knowledge base</h1>
         <p className="mt-2 max-w-2xl text-muted">
-          Everything the Research agent can retrieve from: curated guides, documents you upload
-          (bookings, visa rules, guidebooks) and web results cached from earlier searches.
+          Everything the Research agent can retrieve from: curated guides, web results cached from
+          earlier searches, and documents you upload (bookings, visa rules, guidebooks).
+          <strong className="font-medium text-ink"> Your uploads are private:</strong> they're only used in your own answers.
         </p>
 
         <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -185,12 +186,13 @@ export function KnowledgeBase() {
                             <Icon className="size-4 shrink-0 text-muted" />
                             <span className="truncate" title={d.source}>{d.title}</span>
                             <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted uppercase">{d.source_type}</span>
+                            {d.mine && <span className="shrink-0 rounded bg-accent-soft px-1.5 py-0.5 text-[10px] font-semibold text-accent">Private · only you</span>}
                           </div>
                         </td>
                         <td className="hidden px-3 py-2 capitalize text-muted sm:table-cell">{d.destination ?? '—'}</td>
                         <td className="px-3 py-2 text-right tabular-nums text-muted">{d.chunks}</td>
                         <td className="px-2 py-2">
-                          {d.source_type !== 'guide' && (
+                          {d.mine && (
                             <button type="button" onClick={() => remove(d)} aria-label={`Delete ${d.title}`} className="rounded p-1 text-faint hover:text-bad">
                               <Trash2 className="size-4" />
                             </button>

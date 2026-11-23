@@ -26,7 +26,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from backend import auth, db, export
+from backend import auth, db, export, history
 from backend.agents.graph import build_graph, generate_details
 from backend.agents.plan import money
 from backend.api.routes_account import router as account_router
@@ -66,6 +66,9 @@ def _setup() -> None:
             from langgraph.checkpoint.postgres import PostgresSaver
             with PostgresSaver.from_conn_string(settings.database_url) as saver:
                 saver.setup()  # creates the chat-history tables if needed
+        removed = history.purge_orphans()
+        if removed:
+            log.info("removed %d orphaned conversation(s) from deleted trips/accounts", removed)
         log.info("ready: %s storage, %s search · knowledge base %d chunks (%d new)",
                  "PostgreSQL" if settings.database_url else f"local ({settings.storage_dir})",
                  "Jina API" if models.using_jina() else "local models", get_store().count(), added)
@@ -80,20 +83,8 @@ async def ensure_ready() -> None:
 @asynccontextmanager
 async def graph_session():
     """The agent graph, with chat history stored in Postgres (production) or SQLite (local)."""
-    if settings.database_url:
-        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-        from psycopg import AsyncConnection
-        from psycopg.rows import dict_row
-
-        conn = await AsyncConnection.connect(settings.database_url, autocommit=True,
-                                             prepare_threshold=None, row_factory=dict_row)
-        async with conn:
-            yield build_graph(AsyncPostgresSaver(conn))
-    else:
-        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver  # local development only
-
-        async with AsyncSqliteSaver.from_conn_string(str(settings.storage_dir / "threads.sqlite")) as saver:
-            yield build_graph(saver)
+    async with history.checkpointer() as saver:
+        yield build_graph(saver)
 
 
 @asynccontextmanager
@@ -166,7 +157,7 @@ async def chat(req: ChatRequest, user=Depends(auth.current_user)):
     elif owner != user["id"]:
         raise HTTPException(404, "Trip not found.")
 
-    profile = {**db.get_settings(user["id"]), "name": user["name"]}
+    profile = {**db.get_settings(user["id"]), "name": user["name"], "user_id": user["id"]}
     config = {"configurable": {"thread_id": req.trip_id}}
 
     async def events():
@@ -290,9 +281,10 @@ def patch_trip(trip_id: str, body: TripPatch, user=Depends(auth.current_user)):
 
 
 @app.delete("/api/trips/{trip_id}")
-def delete_trip(trip_id: str, user=Depends(auth.current_user)):
-    if not db.delete_trip(user["id"], trip_id):
+async def delete_trip(trip_id: str, user=Depends(auth.current_user)):
+    if not await asyncio.to_thread(db.delete_trip, user["id"], trip_id):
         raise HTTPException(404, "Trip not found.")
+    await history.delete_threads([trip_id])  # its chat history too
     return {"deleted": trip_id}
 
 
@@ -318,7 +310,8 @@ def export_trip(trip_id: str, format: Literal["pdf", "ics", "md"],
 # ------------------------------------------------------------------ knowledge
 @app.get("/api/documents")
 async def list_documents(user=Depends(auth.current_user)):
-    return await asyncio.to_thread(get_store().documents)
+    """Public guides + cached web results, and this user's own uploads."""
+    return await asyncio.to_thread(get_store().documents, user["id"])
 
 
 @app.post("/api/documents")
@@ -328,8 +321,10 @@ async def upload_document(file: UploadFile = File(...), destination: str = Form(
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(413, "File is larger than 20MB.")
     try:
+        # owner: uploads are private to this user (never shown in other users' answers)
         chunks = await asyncio.to_thread(chunk_file, file.filename or "upload", data, "upload",
-                                         destination=destination or None, title=file.filename)
+                                         destination=destination or None, title=file.filename,
+                                         owner=user["id"])
     except ValueError as exc:
         raise HTTPException(415, str(exc))
     except Exception as exc:
@@ -342,6 +337,10 @@ async def upload_document(file: UploadFile = File(...), destination: str = Form(
 
 @app.delete("/api/documents/{doc_id}")
 async def delete_document(doc_id: str, user=Depends(auth.current_user)):
+    """Users can delete only their own uploads (not the guides or other users' files)."""
+    exists, owner = await asyncio.to_thread(get_store().doc_owner, doc_id)
+    if not exists or owner != user["id"]:
+        raise HTTPException(404, "Document not found.")
     await asyncio.to_thread(get_store().delete_document, doc_id)
     return {"deleted": doc_id}
 
@@ -355,7 +354,7 @@ class SearchRequest(BaseModel):
 @app.post("/api/search")
 async def search(req: SearchRequest, user=Depends(auth.current_user)):
     r = await asyncio.to_thread(retrieve, req.query, 6, req.allow_web, req.destination,
-                                bool(settings.groq_api_key))
+                                bool(settings.groq_api_key), user["id"])
     return {"queries": r.queries, "destination": r.destination, "used_web": r.used_web,
             "trace": r.trace, "sources": [s.to_dict() for s in r.sources]}
 

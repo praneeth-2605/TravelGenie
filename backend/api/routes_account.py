@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Literal
 
 from email_validator import EmailNotValidError, validate_email
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 
-from backend import auth, db
+from backend import auth, db, history
 from backend.config import settings
+from backend.rag.store import get_store
 
 router = APIRouter(prefix="/api")
 
@@ -137,8 +139,13 @@ class DeleteBody(BaseModel):
 
 
 @router.delete("/account")
-def delete_account(body: DeleteBody, response: Response, user=Depends(auth.current_user)):
-    db.delete_user(user["id"])
+async def delete_account(body: DeleteBody, response: Response, user=Depends(auth.current_user)):
+    """Deletes the account and everything that belongs to it: settings, trips,
+    their chat history, and the user's uploaded documents."""
+    trip_ids = [t["id"] for t in await asyncio.to_thread(db.list_trips, user["id"])]
+    await history.delete_threads(trip_ids)
+    await asyncio.to_thread(get_store().delete_where, {"owner": user["id"]})
+    await asyncio.to_thread(db.delete_user, user["id"])  # cascades to settings and trips
     auth.clear_session(response)
     return {"ok": True}
 

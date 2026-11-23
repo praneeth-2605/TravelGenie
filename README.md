@@ -17,6 +17,7 @@ After every request you get separate sections: **Overview, Getting there (flight
 ## ✨ Features
 
 - 👤 **Accounts**: email + password sign-up, "Continue with Google", secure httpOnly sessions, log out everywhere, account deletion
+- 🔒 **Privacy**: uploaded documents are private to their owner (never used in other users' answers), and deleting a trip or an account also deletes its chat history and uploads
 - ⚙️ **User settings**: home city, home currency, usual travellers, typical budget range, travel style, pace, interests, dietary needs, light/dark theme. These are used as defaults for every plan.
 - 📊 **Dashboard**: your trips with prices for all three options, stats, upcoming-trip countdown, favourites
 - 🎯 **Choose a plan** → detailed day-by-day version (meals, getting around, daily spend, booking checklist) + chat focused on it

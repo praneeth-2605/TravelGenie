@@ -245,6 +245,7 @@ export interface KnowledgeDoc {
   destination: string | null
   created_at: number
   chunks: number
+  mine: boolean
 }
 
 export interface Health { ok: boolean; missing_keys: string[]; chunks: number; model: string; google_login: boolean }

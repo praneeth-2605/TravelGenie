@@ -87,22 +87,23 @@ class KnowledgeStore:
     def has_doc(self, doc_id: str) -> bool:
         return bool(self._col.get(where={"doc_id": doc_id}, limit=1)["ids"])
 
-    def documents(self) -> list[dict]:
-        """One row per source document, with chunk counts."""
+    def documents(self, viewer: str | None = None) -> list[dict]:
+        """One row per source document the viewer may see, with chunk counts."""
         rows = self._col.get(include=["metadatas"])
         docs: dict[str, dict] = {}
         for meta in rows["metadatas"]:
-            d = docs.setdefault(meta["doc_id"], {
-                "doc_id": meta["doc_id"],
-                "source": meta.get("source"),
-                "title": meta.get("title") or meta.get("source"),
-                "source_type": meta.get("source_type"),
-                "destination": meta.get("destination"),
-                "created_at": meta.get("created_at"),
-                "chunks": 0,
-            })
+            if not visible(meta, viewer):
+                continue
+            d = docs.setdefault(meta["doc_id"], _doc_row(meta, viewer))
             d["chunks"] += 1
-        return sorted(docs.values(), key=lambda d: (d["source_type"], d["title"] or ""))
+        return sorted(docs.values(), key=lambda d: (d["source_type"] or "", d["title"] or ""))
+
+    def doc_owner(self, doc_id: str) -> tuple[bool, str | None]:
+        """(exists, owner) for a document."""
+        rows = self._col.get(where={"doc_id": doc_id}, limit=1, include=["metadatas"])
+        if not rows["ids"]:
+            return False, None
+        return True, rows["metadatas"][0].get("owner")
 
     def destinations(self) -> set[str]:
         rows = self._col.get(include=["metadatas"])
@@ -117,21 +118,25 @@ class KnowledgeStore:
         rows = self._col.get(ids=ids, include=["documents", "metadatas"])
         return [Hit(i, d, m) for i, d, m in zip(rows["ids"], rows["documents"], rows["metadatas"])]
 
-    def dense_search(self, query: str, k: int = 20, where: dict | None = None) -> list[Hit]:
+    def dense_search(self, query: str, k: int = 20, where: dict | None = None,
+                     viewer: str | None = None) -> list[Hit]:
         if self.count() == 0:
             return []
         res = self._col.query(
             query_embeddings=[models.embed_query(query)],
-            n_results=min(k, self.count()),
+            n_results=min(k * 3, self.count()),  # over-fetch, then drop other users' uploads
             where=where,
             include=["documents", "metadatas", "distances"],
         )
-        return [
+        hits = [
             Hit(i, d, m, 1.0 - dist)
             for i, d, m, dist in zip(res["ids"][0], res["documents"][0], res["metadatas"][0], res["distances"][0])
+            if visible(m, viewer)
         ]
+        return hits[:k]
 
-    def keyword_search(self, query: str, k: int = 20, where: dict | None = None) -> list[Hit]:
+    def keyword_search(self, query: str, k: int = 20, where: dict | None = None,
+                       viewer: str | None = None) -> list[Hit]:
         with self._lock:
             if self._dirty:
                 self._rebuild_bm25()
@@ -146,6 +151,8 @@ class KnowledgeStore:
                 break
             if where and not _matches(row.metadata, where):
                 continue
+            if not visible(row.metadata, viewer):
+                continue
             out.append(Hit(row.id, row.text, row.metadata, float(score)))
             if len(out) >= k:
                 break
@@ -157,6 +164,21 @@ class KnowledgeStore:
         corpus = [tokenize(f"{h.metadata.get('section', '')} {h.text}") for h in self._bm25_rows]
         self._bm25 = BM25Okapi(corpus) if corpus else None
         self._dirty = False
+
+
+def visible(meta: dict, viewer: str | None) -> bool:
+    """Guides and cached web results are public; uploads only to their owner."""
+    owner = meta.get("owner")
+    return owner is None or (viewer is not None and owner == viewer)
+
+
+def _doc_row(meta: dict, viewer: str | None) -> dict:
+    return {
+        "doc_id": meta["doc_id"], "source": meta.get("source"),
+        "title": meta.get("title") or meta.get("source"), "source_type": meta.get("source_type"),
+        "destination": meta.get("destination"), "created_at": meta.get("created_at"), "chunks": 0,
+        "mine": viewer is not None and meta.get("owner") == viewer,
+    }
 
 
 def _matches(meta: dict, where: dict) -> bool:
@@ -265,16 +287,19 @@ class PgVectorStore:
     def _all_meta(self) -> list[dict]:
         return [self._meta(r["metadata"]) for r in self._db.connect().execute(f"SELECT metadata FROM {self._table}").fetchall()]
 
-    def documents(self) -> list[dict]:
+    def documents(self, viewer: str | None = None) -> list[dict]:
         docs: dict[str, dict] = {}
         for meta in self._all_meta():
-            d = docs.setdefault(meta["doc_id"], {
-                "doc_id": meta["doc_id"], "source": meta.get("source"),
-                "title": meta.get("title") or meta.get("source"), "source_type": meta.get("source_type"),
-                "destination": meta.get("destination"), "created_at": meta.get("created_at"), "chunks": 0,
-            })
+            if not visible(meta, viewer):
+                continue
+            d = docs.setdefault(meta["doc_id"], _doc_row(meta, viewer))
             d["chunks"] += 1
         return sorted(docs.values(), key=lambda d: (d["source_type"] or "", d["title"] or ""))
+
+    def doc_owner(self, doc_id: str) -> tuple[bool, str | None]:
+        row = self._db.connect().execute(
+            f"SELECT metadata->>'owner' AS owner FROM {self._table} WHERE doc_id = ? LIMIT 1", (doc_id,)).fetchone()
+        return (row is not None, row["owner"] if row else None)
 
     def destinations(self) -> set[str]:
         rows = self._db.connect().execute(
@@ -290,16 +315,20 @@ class PgVectorStore:
         rows = self._db.connect().execute(f"SELECT id, text, metadata FROM {self._table} WHERE id IN (?, ?)", ids).fetchall()
         return [Hit(r["id"], r["text"], self._meta(r["metadata"])) for r in rows]
 
-    def dense_search(self, query: str, k: int = 20, where: dict | None = None) -> list[Hit]:
+    def dense_search(self, query: str, k: int = 20, where: dict | None = None,
+                     viewer: str | None = None) -> list[Hit]:
         clause, params = self._where(where)
         vec = self._vec(models.embed_query(query))
+        # Public chunks (no owner) plus the viewer's own uploads.
         rows = self._db.connect().execute(
             f"SELECT id, text, metadata, 1 - (embedding <=> ?::vector) AS score FROM {self._table} "
-            f"WHERE {clause} ORDER BY embedding <=> ?::vector LIMIT ?",
-            [vec, *params, vec, k]).fetchall()
+            f"WHERE {clause} AND (metadata->>'owner' IS NULL OR metadata->>'owner' = ?) "
+            f"ORDER BY embedding <=> ?::vector LIMIT ?",
+            [vec, *params, viewer or "", vec, k]).fetchall()
         return [Hit(r["id"], r["text"], self._meta(r["metadata"]), float(r["score"])) for r in rows]
 
-    def keyword_search(self, query: str, k: int = 20, where: dict | None = None) -> list[Hit]:
+    def keyword_search(self, query: str, k: int = 20, where: dict | None = None,
+                       viewer: str | None = None) -> list[Hit]:
         with self._lock:
             if self._dirty:
                 rows = self._db.connect().execute(f"SELECT id, text, metadata FROM {self._table}").fetchall()
@@ -317,6 +346,8 @@ class PgVectorStore:
             if score <= 0:
                 break
             if where and not _matches(row.metadata, where):
+                continue
+            if not visible(row.metadata, viewer):
                 continue
             out.append(Hit(row.id, row.text, row.metadata, float(score)))
             if len(out) >= k:
