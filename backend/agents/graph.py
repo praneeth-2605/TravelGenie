@@ -22,7 +22,6 @@ from datetime import date
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
-from pydantic import ValidationError
 
 from backend.agents.plan import OptionDetails, TripPlan, enrich, money
 from backend.agents.specialists import SPECIALISTS, emit

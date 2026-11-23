@@ -9,6 +9,11 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 
+# Writable folder for caches and local databases. On Vercel the code directory is
+# read-only and only /tmp is writable (and temporary); real data lives in Postgres there.
+ON_VERCEL = bool(os.getenv("VERCEL"))
+STORAGE = Path(os.getenv("STORAGE_DIR") or ("/tmp/travelgenie" if ON_VERCEL else ROOT / "storage"))
+
 
 def _key(name: str) -> str | None:
     """Read a secret, forgiving stray spaces or quotes copied along with it."""
@@ -29,8 +34,9 @@ class Settings:
     openweather_api_key: str | None = _key("OPENWEATHERMAP_API_KEY")
 
     # RAG
-    chroma_dir: Path = ROOT / "storage" / "chroma"
-    uploads_dir: Path = ROOT / "storage" / "uploads"
+    storage_dir: Path = STORAGE
+    chroma_dir: Path = STORAGE / "chroma"
+    uploads_dir: Path = STORAGE / "uploads"
     guides_dir: Path = ROOT / "data" / "guides"
     collection: str = "travel_knowledge"
     embed_model: str = os.getenv("EMBED_MODEL", "BAAI/bge-small-en-v1.5")
@@ -42,15 +48,20 @@ class Settings:
 
     # Storage: PostgreSQL (e.g. Neon) when set; local SQLite + Chroma files otherwise.
     database_url: str | None = _key("DATABASE_URL")
-    # Where the embedding/reranker models are cached (baked into the Docker image).
+    # Where the local embedding/reranker models are cached (development only).
     model_cache: str | None = os.getenv("MODEL_CACHE_DIR")
+    # Jina AI API for embeddings + reranking (production on Vercel). When unset,
+    # local fastembed models are used instead.
+    jina_api_key: str | None = _key("JINA_API_KEY")
+    jina_embed_model: str = os.getenv("JINA_EMBED_MODEL", "jina-embeddings-v3")
+    jina_rerank_model: str = os.getenv("JINA_RERANK_MODEL", "jina-reranker-v2-base-multilingual")
+    jina_dimensions: int = int(os.getenv("JINA_DIMENSIONS", "512"))
 
     # Auth
     secret_key: str | None = _key("SECRET_KEY")
     google_client_id: str | None = _key("GOOGLE_CLIENT_ID")
-    # Set COOKIE_SECURE=true when served over HTTPS (production). It also switches the
-    # session cookie to SameSite=None so login works inside Hugging Face's embedded page.
-    cookie_secure: bool = os.getenv("COOKIE_SECURE", "false").lower() == "true"
+    # Secure (HTTPS-only) session cookie: on by default on Vercel, off locally (http).
+    cookie_secure: bool = os.getenv("COOKIE_SECURE", "true" if ON_VERCEL else "false").lower() == "true"
     # Public origin(s) of the deployed site, for the cross-site request check.
     public_origins: list[str] = field(
         default_factory=lambda: [o.strip() for o in os.getenv("PUBLIC_ORIGINS", "").split(",") if o.strip()])

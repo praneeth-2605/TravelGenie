@@ -13,15 +13,16 @@ import asyncio
 import json
 import logging
 import re
+import threading
 from contextlib import asynccontextmanager
 from typing import Literal
+from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import AIMessage, HumanMessage
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
@@ -44,37 +45,61 @@ MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 DIST = ROOT / "frontend" / "dist"
 
 
+# ------------------------------------------------------------------ startup
+# Serverless platforms (Vercel) may not run startup hooks and may handle each
+# request on a different event loop, so setup is lazy, thread-safe and done once
+# per instance, and each request opens its own chat-history connection.
+_ready = False
+_ready_lock = threading.Lock()
+
+
+def _setup() -> None:
+    global _ready
+    with _ready_lock:
+        if _ready:
+            return
+        settings.storage_dir.mkdir(parents=True, exist_ok=True)
+        db.init()
+        models.warm_up()
+        added = seed_guides()
+        if settings.database_url:
+            from langgraph.checkpoint.postgres import PostgresSaver
+            with PostgresSaver.from_conn_string(settings.database_url) as saver:
+                saver.setup()  # creates the chat-history tables if needed
+        log.info("ready: %s storage, %s search · knowledge base %d chunks (%d new)",
+                 "PostgreSQL" if settings.database_url else f"local ({settings.storage_dir})",
+                 "Jina API" if models.using_jina() else "local models", get_store().count(), added)
+        _ready = True
+
+
+async def ensure_ready() -> None:
+    if not _ready:
+        await asyncio.to_thread(_setup)
+
+
+@asynccontextmanager
+async def graph_session():
+    """The agent graph, with chat history stored in Postgres (production) or SQLite (local)."""
+    if settings.database_url:
+        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+        from psycopg import AsyncConnection
+        from psycopg.rows import dict_row
+
+        conn = await AsyncConnection.connect(settings.database_url, autocommit=True,
+                                             prepare_threshold=None, row_factory=dict_row)
+        async with conn:
+            yield build_graph(AsyncPostgresSaver(conn))
+    else:
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver  # local development only
+
+        async with AsyncSqliteSaver.from_conn_string(str(settings.storage_dir / "threads.sqlite")) as saver:
+            yield build_graph(saver)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    (ROOT / "storage").mkdir(exist_ok=True)
-    db.init()
-    await asyncio.to_thread(models.warm_up)
-    added = await asyncio.to_thread(seed_guides)
-    log.info("knowledge base ready: %d chunks (%d new)", get_store().count(), added)
-    if settings.database_url:
-        # Chat history in Postgres (Neon). A pool with health checks, because
-        # serverless Postgres closes idle connections when it scales to zero.
-        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-        from psycopg.rows import dict_row
-        from psycopg_pool import AsyncConnectionPool
-
-        pool = AsyncConnectionPool(settings.database_url, min_size=1, max_size=6, open=False,
-                                   kwargs={"autocommit": True, "prepare_threshold": None, "row_factory": dict_row},
-                                   check=AsyncConnectionPool.check_connection)
-        await pool.open()
-        try:
-            saver = AsyncPostgresSaver(pool)
-            await saver.setup()
-            app.state.graph = build_graph(saver)
-            log.info("storage: PostgreSQL (users, trips, chats, knowledge base)")
-            yield
-        finally:
-            await pool.close()
-    else:
-        async with AsyncSqliteSaver.from_conn_string(str(ROOT / "storage" / "threads.sqlite")) as saver:
-            app.state.graph = build_graph(saver)
-            log.info("storage: local files in storage/")
-            yield
+    await ensure_ready()  # warm up when the platform runs startup hooks (local, containers)
+    yield
 
 
 app = FastAPI(title="TravelGenie", lifespan=lifespan)
@@ -86,18 +111,19 @@ _UNSAFE = {"POST", "PUT", "PATCH", "DELETE"}
 
 @app.middleware("http")
 async def block_cross_site_writes(request: Request, call_next):
-    """CSRF guard: the session cookie is SameSite=None in production (so login works
-    inside Hugging Face's embedded page), so reject state-changing requests that a
-    browser sends from any other site."""
+    """CSRF guard (on top of SameSite=Lax cookies): reject state-changing requests
+    that a browser sends from any other site. Also makes sure setup has run."""
+    if request.url.path.startswith("/api/"):
+        await ensure_ready()
     if request.method in _UNSAFE and request.url.path.startswith("/api/"):
         origin = request.headers.get("origin")
         if origin:
-            own = f"{request.url.scheme}://{request.url.netloc}"
-            forwarded = request.headers.get("x-forwarded-host")
-            allowed = {own, *settings.cors_origins, *settings.public_origins}
-            if forwarded:
-                allowed.add(f"https://{forwarded}")
-            if origin not in allowed:
+            # Compare hosts, not schemes: behind a proxy (Vercel) the app may see http
+            # while the browser's Origin says https.
+            own_hosts = {h for h in (request.headers.get("host"), request.headers.get("x-forwarded-host"),
+                                     request.url.netloc) if h}
+            allowed = {*settings.cors_origins, *settings.public_origins}
+            if urlparse(origin).netloc not in own_hosts and origin not in allowed:
                 return JSONResponse({"detail": "Cross-site request blocked."}, status_code=403)
     return await call_next(request)
 app.include_router(account_router)
@@ -141,45 +167,45 @@ async def chat(req: ChatRequest, user=Depends(auth.current_user)):
         raise HTTPException(404, "Trip not found.")
 
     profile = {**db.get_settings(user["id"]), "name": user["name"]}
-    graph = app.state.graph
     config = {"configurable": {"thread_id": req.trip_id}}
 
     async def events():
         try:
-            async for mode, payload in graph.astream(
-                {"messages": [HumanMessage(req.message)], "profile": profile}, config,
-                stream_mode=["custom", "messages"],
-            ):
-                if mode == "custom":
-                    yield _sse("agent", payload)
-                elif mode == "messages":
-                    chunk, meta = payload
-                    if meta.get("langgraph_node") == "writer" and chunk.type == "AIMessageChunk":
-                        text = text_of(chunk.content)
-                        if text:
-                            yield _sse("token", {"text": text})
-            state = (await graph.aget_state(config)).values
-            plan = state.get("plan")
-            trip = state.get("trip") or {}
-            updates = {"destination": trip.get("destination"), "start_date": trip.get("start_date"),
-                       "days": trip.get("days")}
-            if plan and state.get("intent") in ("plan", "revise"):
-                updates["plan"] = plan
-                updates["selected_tier"] = plan.get("selected_tier") or ""
-                if trip.get("destination"):
-                    updates["title"] = f"{trip['destination']} · {trip.get('days') or len(plan['days'])} days"
-            await asyncio.to_thread(db.update_trip, req.trip_id, **{k: v for k, v in updates.items() if v is not None})
-            yield _sse("final", {
-                "answer": text_of(state["messages"][-1].content),
-                "intent": state.get("intent"),
-                "plan": plan if state.get("intent") in ("plan", "revise") else None,
-                "sources": state.get("sources") or [],
-                "trip": trip,
-                "bookings": state.get("bookings") or [],
-                "weather": state.get("weather"),
-                "transport": state.get("transport"),
-                "selected_tier": state.get("selected_tier"),
-            })
+            async with graph_session() as graph:
+                async for mode, payload in graph.astream(
+                    {"messages": [HumanMessage(req.message)], "profile": profile}, config,
+                    stream_mode=["custom", "messages"],
+                ):
+                    if mode == "custom":
+                        yield _sse("agent", payload)
+                    elif mode == "messages":
+                        chunk, meta = payload
+                        if meta.get("langgraph_node") == "writer" and chunk.type == "AIMessageChunk":
+                            text = text_of(chunk.content)
+                            if text:
+                                yield _sse("token", {"text": text})
+                state = (await graph.aget_state(config)).values
+                plan = state.get("plan")
+                trip = state.get("trip") or {}
+                updates = {"destination": trip.get("destination"), "start_date": trip.get("start_date"),
+                           "days": trip.get("days")}
+                if plan and state.get("intent") in ("plan", "revise"):
+                    updates["plan"] = plan
+                    updates["selected_tier"] = plan.get("selected_tier") or ""
+                    if trip.get("destination"):
+                        updates["title"] = f"{trip['destination']} · {trip.get('days') or len(plan['days'])} days"
+                await asyncio.to_thread(db.update_trip, req.trip_id, **{k: v for k, v in updates.items() if v is not None})
+                yield _sse("final", {
+                    "answer": text_of(state["messages"][-1].content),
+                    "intent": state.get("intent"),
+                    "plan": plan if state.get("intent") in ("plan", "revise") else None,
+                    "sources": state.get("sources") or [],
+                    "trip": trip,
+                    "bookings": state.get("bookings") or [],
+                    "weather": state.get("weather"),
+                    "transport": state.get("transport"),
+                    "selected_tier": state.get("selected_tier"),
+                })
         except Exception as exc:
             log.exception("chat failed")
             yield _sse("error", {"message": _friendly_error(exc)})
@@ -201,7 +227,8 @@ def list_trips(user=Depends(auth.current_user)):
 @app.get("/api/trips/{trip_id}")
 async def get_trip(trip_id: str, user=Depends(auth.current_user)):
     trip = _owned_trip(user, trip_id)
-    snap = await app.state.graph.aget_state({"configurable": {"thread_id": trip_id}})
+    async with graph_session() as graph:
+        snap = await graph.aget_state({"configurable": {"thread_id": trip_id}})
     values = snap.values or {}
     trip["messages"] = [{"role": "user" if m.type == "human" else "assistant", "content": text_of(m.content)}
                         for m in values.get("messages", []) if m.type in ("human", "ai")]
@@ -242,10 +269,11 @@ async def select_option(trip_id: str, body: SelectBody, user=Depends(auth.curren
              "Ask me anything about it: what to book first, cheaper swaps, food near your stay, "
              "or how to get between places.")
     config = {"configurable": {"thread_id": trip_id}}
-    await app.state.graph.aupdate_state(config, {
-        "plan": plan, "selected_tier": body.tier,
-        "messages": [HumanMessage(f"I choose the {option['label']} option ({option['title']})."), AIMessage(reply)],
-    }, as_node="planner")
+    async with graph_session() as graph:
+        await graph.aupdate_state(config, {
+            "plan": plan, "selected_tier": body.tier,
+            "messages": [HumanMessage(f"I choose the {option['label']} option ({option['title']})."), AIMessage(reply)],
+        }, as_node="planner")
     return {"plan": plan, "message": reply}
 
 

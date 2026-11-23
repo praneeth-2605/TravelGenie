@@ -1,0 +1,9 @@
+# Local development: everything in production, plus a local server, local
+# databases (SQLite + Chroma) and on-device search models (no API keys needed).
+-r requirements.txt
+
+uvicorn[standard]>=0.30
+langgraph-checkpoint-sqlite>=2.0
+aiosqlite>=0.20
+chromadb>=1.0
+fastembed>=0.4

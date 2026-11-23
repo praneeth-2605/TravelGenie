@@ -17,9 +17,9 @@ import time
 import uuid
 from contextlib import contextmanager
 
-from backend.config import ROOT, settings
+from backend.config import settings
 
-DB_PATH = ROOT / "storage" / "app.sqlite"
+DB_PATH = settings.storage_dir / "app.sqlite"
 USE_PG = bool(settings.database_url)
 _local = threading.local()
 

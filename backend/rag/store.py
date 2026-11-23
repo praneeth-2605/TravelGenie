@@ -44,8 +44,10 @@ class KnowledgeStore:
 
         settings.chroma_dir.mkdir(parents=True, exist_ok=True)
         self._client = chromadb.PersistentClient(path=str(settings.chroma_dir))
+        # One collection per embedding model: vectors from different models (sizes)
+        # can't be mixed, so switching between Jina and local models never clashes.
         self._col = self._client.get_or_create_collection(
-            settings.collection, metadata={"hnsw:space": "cosine"}, embedding_function=None
+            (settings.collection if models.index_tag() == "local" else f"{settings.collection}_{models.index_tag()}"), metadata={"hnsw:space": "cosine"}, embedding_function=None
         )
         self._lock = threading.RLock()
         self._bm25: BM25Okapi | None = None
@@ -185,13 +187,15 @@ class PgVectorStore:
 
         self._db = db
         dim = len(models.embed_query("dimension probe"))
+        # One table per embedding model (see KnowledgeStore): e.g. kb_chunks_jina_512.
+        self._table = f"kb_chunks_{models.index_tag()}"
         with db.tx() as c:
             c.execute("CREATE EXTENSION IF NOT EXISTS vector")
-            c.execute(f"""CREATE TABLE IF NOT EXISTS kb_chunks (
+            c.execute(f"""CREATE TABLE IF NOT EXISTS {self._table} (
                 id TEXT PRIMARY KEY, doc_id TEXT NOT NULL, text TEXT NOT NULL,
                 metadata JSONB NOT NULL, embedding vector({dim}) NOT NULL)""")
-            c.execute("CREATE INDEX IF NOT EXISTS kb_chunks_doc ON kb_chunks (doc_id)")
-            c.execute("CREATE INDEX IF NOT EXISTS kb_chunks_hnsw ON kb_chunks USING hnsw (embedding vector_cosine_ops)")
+            c.execute(f"CREATE INDEX IF NOT EXISTS {self._table}_doc ON {self._table} (doc_id)")
+            c.execute(f"CREATE INDEX IF NOT EXISTS {self._table}_hnsw ON {self._table} USING hnsw (embedding vector_cosine_ops)")
         self._lock = threading.RLock()
         self._bm25: BM25Okapi | None = None
         self._bm25_rows: list[Hit] = []
@@ -235,7 +239,7 @@ class PgVectorStore:
             with self._db.tx() as tx:
                 for c, v in zip(batch, vectors):
                     tx.execute(
-                        "INSERT INTO kb_chunks (id, doc_id, text, metadata, embedding) VALUES (?, ?, ?, ?::jsonb, ?::vector) "
+                        f"INSERT INTO {self._table} (id, doc_id, text, metadata, embedding) VALUES (?, ?, ?, ?::jsonb, ?::vector) "
                         "ON CONFLICT (id) DO UPDATE SET doc_id = EXCLUDED.doc_id, text = EXCLUDED.text, "
                         "metadata = EXCLUDED.metadata, embedding = EXCLUDED.embedding",
                         (c.id, c.metadata["doc_id"], c.text, json.dumps(c.metadata), self._vec(v)))
@@ -248,18 +252,18 @@ class PgVectorStore:
     def delete_where(self, where: dict) -> None:
         clause, params = self._where(where)
         with self._db.tx() as tx:
-            tx.execute(f"DELETE FROM kb_chunks WHERE {clause}", params)
+            tx.execute(f"DELETE FROM {self._table} WHERE {clause}", params)
         self._dirty = True
 
     # ---------- reads ----------
     def count(self) -> int:
-        return self._db.connect().execute("SELECT count(*) AS n FROM kb_chunks").fetchone()["n"]
+        return self._db.connect().execute(f"SELECT count(*) AS n FROM {self._table}").fetchone()["n"]
 
     def has_doc(self, doc_id: str) -> bool:
-        return self._db.connect().execute("SELECT 1 FROM kb_chunks WHERE doc_id = ? LIMIT 1", (doc_id,)).fetchone() is not None
+        return self._db.connect().execute(f"SELECT 1 FROM {self._table} WHERE doc_id = ? LIMIT 1", (doc_id,)).fetchone() is not None
 
     def _all_meta(self) -> list[dict]:
-        return [self._meta(r["metadata"]) for r in self._db.connect().execute("SELECT metadata FROM kb_chunks").fetchall()]
+        return [self._meta(r["metadata"]) for r in self._db.connect().execute(f"SELECT metadata FROM {self._table}").fetchall()]
 
     def documents(self) -> list[dict]:
         docs: dict[str, dict] = {}
@@ -274,7 +278,7 @@ class PgVectorStore:
 
     def destinations(self) -> set[str]:
         rows = self._db.connect().execute(
-            "SELECT DISTINCT metadata->>'destination' AS d FROM kb_chunks "
+            f"SELECT DISTINCT metadata->>'destination' AS d FROM {self._table} "
             "WHERE metadata->>'destination' IS NOT NULL").fetchall()
         return {r["d"] for r in rows if r["d"]}
 
@@ -283,14 +287,14 @@ class PgVectorStore:
         if idx is None:
             return []
         ids = [f"{hit.metadata['doc_id']}-{idx - 1}", f"{hit.metadata['doc_id']}-{idx + 1}"]
-        rows = self._db.connect().execute("SELECT id, text, metadata FROM kb_chunks WHERE id IN (?, ?)", ids).fetchall()
+        rows = self._db.connect().execute(f"SELECT id, text, metadata FROM {self._table} WHERE id IN (?, ?)", ids).fetchall()
         return [Hit(r["id"], r["text"], self._meta(r["metadata"])) for r in rows]
 
     def dense_search(self, query: str, k: int = 20, where: dict | None = None) -> list[Hit]:
         clause, params = self._where(where)
         vec = self._vec(models.embed_query(query))
         rows = self._db.connect().execute(
-            f"SELECT id, text, metadata, 1 - (embedding <=> ?::vector) AS score FROM kb_chunks "
+            f"SELECT id, text, metadata, 1 - (embedding <=> ?::vector) AS score FROM {self._table} "
             f"WHERE {clause} ORDER BY embedding <=> ?::vector LIMIT ?",
             [vec, *params, vec, k]).fetchall()
         return [Hit(r["id"], r["text"], self._meta(r["metadata"]), float(r["score"])) for r in rows]
@@ -298,7 +302,7 @@ class PgVectorStore:
     def keyword_search(self, query: str, k: int = 20, where: dict | None = None) -> list[Hit]:
         with self._lock:
             if self._dirty:
-                rows = self._db.connect().execute("SELECT id, text, metadata FROM kb_chunks").fetchall()
+                rows = self._db.connect().execute(f"SELECT id, text, metadata FROM {self._table}").fetchall()
                 self._bm25_rows = [Hit(r["id"], r["text"], self._meta(r["metadata"])) for r in rows]
                 corpus = [tokenize(f"{h.metadata.get('section', '')} {h.text}") for h in self._bm25_rows]
                 self._bm25 = BM25Okapi(corpus) if corpus else None

@@ -21,14 +21,14 @@ import threading
 import time
 import requests
 
-from backend.config import ROOT
+from backend.config import settings
 
 log = logging.getLogger(__name__)
 
 UA = {"User-Agent": "TravelGenie/1.0 (open-source travel planner)", "Accept-Language": "en"}
 NOMINATIM = "https://nominatim.openstreetmap.org/search"
 WIKIVOYAGE = "https://en.wikivoyage.org/w/api.php"
-CACHE_DIR = ROOT / "storage" / "places_cache"
+CACHE_DIR = settings.storage_dir / "places_cache"
 CACHE_TTL = 7 * 86400
 _nominatim_lock = threading.Lock()
 _last_nominatim = 0.0

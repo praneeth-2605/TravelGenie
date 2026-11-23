@@ -28,10 +28,16 @@ from backend.rag.store import Hit, get_store
 log = logging.getLogger(__name__)
 
 RRF_K = 60
-# Cross-encoder logit below which a chunk is treated as irrelevant.
-MIN_RERANK_SCORE = -4.0
-# If the best local chunk scores below this, we go to the web.
-CONFIDENT_SCORE = 0.0
+
+
+def _thresholds() -> tuple[float, float]:
+    """(drop below, confident above) on the reranker's logit scale.
+
+    Calibrated per reranker on the bundled guides: the local ms-marco cross-encoder
+    spreads scores widely (irrelevant ≈ -8, relevant ≥ 0); Jina's reranker is
+    tighter (irrelevant ≈ -2.3 and lower, relevant ≈ -0.4 to +0.6).
+    """
+    return (-2.0, -1.0) if models.using_jina() else (-4.0, 0.0)
 
 
 @dataclass
@@ -139,7 +145,7 @@ def rerank(queries: list[str], hits: list[Hit], top_n: int) -> list[Hit]:
     for h, s in zip(hits, best):
         h.score = s
     ranked = sorted(hits, key=lambda h: h.score, reverse=True)
-    return [h for h in ranked if h.score >= MIN_RERANK_SCORE][:top_n]
+    return [h for h in ranked if h.score >= _thresholds()[0]][:top_n]
 
 
 # ---------------------------------------------------------------- step 5
@@ -208,7 +214,7 @@ def retrieve(question: str, top_n: int = 6, allow_web: bool = True,
     top_score = best[0].score if best else float("-inf")
     result.trace.append(f"top rerank score: {top_score:.2f}")
 
-    if allow_web and (top_score < CONFIDENT_SCORE or len(best) < 2):
+    if allow_web and (top_score < _thresholds()[1] or len(best) < 2):
         try:
             web = web_search_and_cache(question, destination)
         except WebSearchError as exc:

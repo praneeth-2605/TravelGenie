@@ -65,12 +65,13 @@ All the output formats (cards, timeline, map, PDF, calendar, Markdown) are gener
 | Layer | Tech |
 |---|---|
 | Frontend | React 19, TypeScript, Vite, Tailwind CSS, React Router, Leaflet (OpenStreetMap) |
-| API | FastAPI, Server-Sent Events, Uvicorn |
+| API | FastAPI, Server-Sent Events (a Vercel Python function in production) |
 | Auth | bcrypt, JWT in httpOnly cookies, Google Identity Services |
 | Agents | LangGraph, LangChain, Groq (`gpt-oss-20b` for routing, `gpt-oss-120b` for planning) |
 | Places | Wikivoyage listings, OpenStreetMap Nominatim |
-| RAG | ChromaDB, fastembed (embeddings + cross-encoder reranking), BM25 |
-| Storage | SQLite (users, settings, trips), LangGraph SQLite checkpointer (conversations) |
+| RAG | pgvector + BM25; Jina AI embeddings + reranking in production, local fastembed + ChromaDB in development |
+| Storage | Neon PostgreSQL in production (users, trips, chats, vectors); SQLite + Chroma locally |
+| Hosting | Vercel (static React site + FastAPI function) |
 | Exports | fpdf2 (PDF), iCalendar, Markdown |
 
 ---
@@ -84,17 +85,20 @@ TravelGenie/
 │   ├── api/           # FastAPI app + account routes
 │   ├── rag/           # ingestion, vector store, retrieval pipeline
 │   ├── auth.py        # passwords, sessions, Google sign-in
-│   ├── db.py          # users, settings, trips (SQLite)
+│   ├── db.py          # users, settings, trips (PostgreSQL or SQLite)
 │   ├── places.py      # Wikivoyage + OpenStreetMap
 │   ├── export.py      # PDF / .ics / Markdown
 │   ├── config.py
 │   └── llm.py
+├── api/index.py       # Vercel entry point for the FastAPI app
 ├── data/guides/       # curated destination guides (auto-indexed)
 ├── frontend/src/
 │   ├── pages/         # login, dashboard, new trip, trip workspace, settings
 │   └── components/    # app shell, chat, plan views (options, timeline, map, stays)
 ├── storage/           # databases, vector store, caches (created at runtime, git-ignored)
-├── requirements.txt
+├── requirements.txt      # production dependencies (what Vercel installs)
+├── requirements-dev.txt  # + local server, local databases and on-device models
+├── vercel.json
 └── .env.example
 ```
 
@@ -109,7 +113,7 @@ You need **Python 3.11+** and **Node.js 20+**.
 ```bash
 python -m venv venv
 source venv/bin/activate          # Windows: venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 cp .env.example .env              # then add your keys
 uvicorn backend.api.main:app --reload --port 8000
 ```
@@ -126,50 +130,40 @@ Open **http://localhost:5173** and create an account.
 
 ---
 
-## ☁️ Deploy (Google Cloud Run + Neon)
+## ☁️ Deploy (Vercel + Neon + Jina, free, no card)
 
-In production nothing is stored on a laptop: the app runs on **Google Cloud Run** and all data
-(accounts, settings, trips, chats and the knowledge base) lives in **Neon** PostgreSQL with pgvector.
+In production nothing is stored on a laptop: **Vercel** serves the React site and runs the FastAPI backend as a
+Python function, all data (accounts, settings, trips, chats, knowledge base) lives in **Neon** PostgreSQL with
+pgvector, and **Jina AI** provides the search embeddings and reranking.
 
-| Where | What |
-|---|---|
-| Google Cloud Run | Runs the container from the `Dockerfile` (React app + FastAPI + AI models); scales to zero when idle |
-| Neon | Users, settings, trips, chat history, knowledge-base vectors |
-
-### 1. Database (Neon)
+### 1. Neon (database)
 Create a project at [neon.tech](https://neon.tech), open **Connect** and copy the connection string
-(`postgresql://…?sslmode=require`). TravelGenie creates its tables and enables `pgvector` on first start.
+(`postgresql://…?sslmode=require`). TravelGenie creates its tables and enables `pgvector` on first use.
 
-### 2. Google Cloud project
-1. Open the [Google Cloud console](https://console.cloud.google.com), create a project (e.g. `travelgenie`) and
-   attach a billing account (a card is required for verification; small apps stay within the free tier).
-2. Recommended: **Billing → Budgets & alerts** → create a budget of $1 so you're emailed if anything is ever charged.
+### 2. Jina AI (search models)
+Get a free API key at [jina.ai](https://jina.ai) (it starts with `jina_`).
 
-### 3. Deploy from Cloud Shell (nothing to install)
-Open [Cloud Shell](https://shell.cloud.google.com) and run:
+### 3. Vercel (hosting)
+1. Sign up at [vercel.com](https://vercel.com) with GitHub, then **Add New → Project** and import this repository.
+2. Leave the build settings as they are (`vercel.json` configures them).
+3. Under **Environment Variables**, add:
 
-```bash
-git clone https://github.com/praneeth-2605/TravelGenie.git
-cd TravelGenie
-gcloud config set project YOUR_PROJECT_ID
-bash deploy/cloudrun.sh
-```
+| Name | Value |
+|---|---|
+| `DATABASE_URL` | the Neon connection string |
+| `GROQ_API_KEY` | your Groq key |
+| `JINA_API_KEY` | your Jina key |
+| `SECRET_KEY` | a long random string: `python3 -c "import secrets; print(secrets.token_urlsafe(48))"` |
+| `OPENWEATHERMAP_API_KEY` | optional, live forecasts |
+| `TAVILY_API_KEY` | optional, web search |
+| `GOOGLE_CLIENT_ID` | optional, Google sign-in (add your Vercel URL to the OAuth client's JavaScript origins) |
 
-The script enables the needed APIs, asks for your keys (hidden input: Neon URL, Groq key, optional
-OpenWeatherMap / Tavily / Google Client ID), generates a session `SECRET_KEY`, builds the image and deploys.
-The first build takes about 5–10 minutes and ends with your public URL (`https://travelgenie-….run.app`).
-
-### Updating
-```bash
-cd TravelGenie && git pull && bash deploy/cloudrun.sh
-```
-Keys are kept between deploys; run `bash deploy/cloudrun.sh --secrets` to change them.
+4. Click **Deploy**. Every later `git push` to `main` redeploys automatically.
 
 ### Notes
-- Cloud Run scales to zero: the first visit after a quiet period takes ~10–20 s to wake up.
-- `--max-instances 2` caps usage. Free tier (per month): 2 million requests, 180,000 vCPU-seconds, 360,000 GiB-seconds.
-  The container image is stored in Artifact Registry (~1.5 GB; the first 0.5 GB is free, beyond that a few cents a month).
-- Locally, leave `DATABASE_URL` empty to keep using files in `storage/` for development.
+- The first request after a quiet period starts a new function instance (a few seconds).
+- Vercel's free Hobby plan is for personal, non-commercial projects.
+- Locally, leave `DATABASE_URL` and `JINA_API_KEY` empty to use files in `storage/` and on-device models.
 
 ---
 
@@ -181,8 +175,10 @@ Keys are kept between deploys; run `bash deploy/cloudrun.sh --secrets` to change
 | `TAVILY_API_KEY` | optional | Web-search fallback for research |
 | `OPENWEATHERMAP_API_KEY` | optional | Live forecasts |
 | `GOOGLE_CLIENT_ID` | optional | Shows "Continue with Google" |
-| `SECRET_KEY` | optional | Signs login sessions (auto-generated locally if empty) |
-| `COOKIE_SECURE` | optional | `true` when served over HTTPS |
+| `DATABASE_URL` | production | Neon / PostgreSQL connection string (local files are used when empty) |
+| `JINA_API_KEY` | production | Jina AI embeddings + reranking (on-device models are used when empty) |
+| `SECRET_KEY` | production | Signs login sessions (auto-generated locally if empty) |
+| `COOKIE_SECURE` | optional | HTTPS-only cookies (on automatically on Vercel) |
 | `GROQ_MODEL` / `GROQ_FAST_MODEL` / `GROQ_WRITER_MODEL` | optional | Override the models |
 
 ### Setting up Google sign-in

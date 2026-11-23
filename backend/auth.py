@@ -16,7 +16,7 @@ import jwt
 from fastapi import Depends, HTTPException, Request, Response
 
 from backend import db
-from backend.config import ROOT, settings
+from backend.config import settings
 
 COOKIE = "tg_session"
 SESSION_DAYS = 30
@@ -31,7 +31,7 @@ def _secret() -> str:
         return settings.secret_key
     if settings.database_url:
         raise RuntimeError("SECRET_KEY must be set when DATABASE_URL is set (production).")
-    path = ROOT / "storage" / "secret.key"
+    path = settings.storage_dir / "secret.key"
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
         path.write_text(secrets.token_urlsafe(48))
@@ -87,12 +87,9 @@ def issue_session(response: Response, user) -> None:
 
 
 def _cookie_flags() -> dict:
-    # Over HTTPS (production) SameSite=None lets the cookie work when the app is shown
-    # inside Hugging Face's page (an iframe); cross-site writes are blocked by the
-    # Origin check in the API. Locally, plain Lax.
-    if settings.cookie_secure:
-        return {"httponly": True, "secure": True, "samesite": "none", "path": "/"}
-    return {"httponly": True, "secure": False, "samesite": "lax", "path": "/"}
+    # httpOnly: page scripts can't read it. SameSite=Lax: not sent with cross-site
+    # POSTs (plus the API's Origin check). Secure: HTTPS-only in production.
+    return {"httponly": True, "secure": settings.cookie_secure, "samesite": "lax", "path": "/"}
 
 
 def clear_session(response: Response) -> None:
