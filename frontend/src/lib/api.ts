@@ -75,17 +75,18 @@ export interface WebResult {
 
 export interface OptionDetails {
   overview: string
-  days: {
-    day: number
-    summary: string
-    meals: { meal: string; place: string; try: string | null; cost: number | null }[]
-    getting_around: string | null
-    spend: number | null
-    tip: string | null
-  }[]
   booking_checklist: { item: string; when: string; where: string; cost: number | null }[]
   money_tips: string[]
   good_to_know: string[]
+}
+
+export interface Photo {
+  url: string
+  thumb: string
+  page: string
+  credit: string
+  /** "place" = a photo of this exact place; "area" = taken nearby */
+  kind: 'place' | 'area'
 }
 
 export interface Place {
@@ -100,27 +101,73 @@ export interface Place {
   hours?: string
   url?: string
   description?: string
+  photo?: Photo | null
 }
 
-export interface PlanItem {
-  time: string
-  title: string
-  description: string
+export interface PlanStop {
+  kind: 'sight' | 'meal' | 'activity' | 'free'
   place_id: string | null
-  place?: Place
+  title: string
+  duration_min: number | null
+  note: string
   cost: number | null
   cite: number[] | null
+  unverified?: boolean
 }
 
 export interface PlanDay {
   day: number
+  title: string
+  area: string | null
+  stops: PlanStop[]
+}
+
+export type StepKind = 'arrive' | 'hotel' | 'start' | 'sight' | 'meal' | 'activity' | 'free' | 'travel' | 'end' | 'depart'
+
+export interface Step {
+  time: string
+  end: string | null
+  kind: StepKind
+  title: string
+  detail?: string | null
+  minutes?: number | null
+  place?: Place
+  distance_km?: number
+  mode?: string
+  estimated?: boolean
+  cite?: number[]
+  unverified?: boolean
+}
+
+export interface ScheduleDay {
+  day: number
   date: string | null
   title: string
   area: string | null
-  items: PlanItem[]
+  steps: Step[]
 }
 
 export type Tier = 'budget' | 'luxury' | 'yours'
+
+export interface GettingThereInfo {
+  mode: string
+  detail: string
+  duration: string | null
+  cost: number | null
+  arrive_at?: string | null
+  depart_from_destination?: string | null
+  arrive_time?: string | null
+}
+
+export interface StayAdvice {
+  area: string
+  kind: string
+  nightly_min: number | null
+  nightly_max: number | null
+  why: string
+  candidate_ids: string[]
+  candidates: Place[]
+}
 
 export interface PlanOption {
   tier: Tier
@@ -130,10 +177,9 @@ export interface PlanOption {
   per_person: number | null
   per_day: number | null
   breakdown: { travel?: number; stay: number; food: number; transport: number; activities: number; other: number }
-  getting_there: { mode: string; detail: string; duration: string | null; cost: number | null } | null
+  getting_there: GettingThereInfo | null
   details?: OptionDetails
-  stay: { place_id: string | null; name: string; nightly: number | null; why: string; place?: Place }
-  alt_stays: Place[]
+  stay: StayAdvice
   highlights: string[]
   fits_budget: boolean | null
   note: string | null
@@ -164,7 +210,10 @@ export interface TripPlan {
   map_center: { lat: number; lon: number; name: string } | null
   markers: Marker[]
   weather: Weather | null
-  stay_candidates: Place[]
+  places: Record<string, Place>
+  schedules: Partial<Record<Tier, ScheduleDay[]>>
+  hotels: Partial<Record<Tier, string | null>>
+  pace?: string
   transport: Transport | null
   web_results: WebResult[]
   selected_tier: Tier | null
@@ -238,26 +287,7 @@ export interface FinalEvent {
   weather: Weather | null
 }
 
-export interface KnowledgeDoc {
-  doc_id: string
-  source: string
-  title: string
-  source_type: string
-  destination: string | null
-  created_at: number
-  chunks: number
-  mine: boolean
-}
-
-export interface Health { ok: boolean; missing_keys: string[]; chunks: number; model: string; google_login: boolean }
-
-export interface SearchResult {
-  queries: string[]
-  destination: string | null
-  used_web: boolean
-  trace: string[]
-  sources: Source[]
-}
+export interface Health { ok: boolean; missing_keys: string[]; chunks: number; model: string; google_login: boolean; skills?: string[] }
 
 // ---------------------------------------------------------------- http
 export class ApiError extends Error {
@@ -329,16 +359,8 @@ export const api = {
   exportUrl: (id: string, format: 'pdf' | 'ics' | 'md', option?: Tier) =>
     `/api/trips/${id}/export?format=${format}${option ? `&option=${option}` : ''}`,
 
-  documents: () => request<KnowledgeDoc[]>('/api/documents'),
-  deleteDocument: (id: string) => request(`/api/documents/${id}`, json('DELETE')),
-  upload: (file: File, destination: string) => {
-    const form = new FormData()
-    form.append('file', file)
-    form.append('destination', destination)
-    return request<{ doc_id: string; chunks: number; filename: string }>('/api/documents', { method: 'POST', body: form })
-  },
-  search: (query: string, destination: string, allow_web: boolean) =>
-    request<SearchResult>('/api/search', json('POST', { query, destination: destination || null, allow_web })),
+  chooseHotel: (id: string, tier: Tier, place_id: string | null) =>
+    request<{ plan: TripPlan }>(`/api/trips/${id}/hotel`, json('POST', { tier, place_id })),
 }
 
 // ---------------------------------------------------------------- streaming chat
@@ -409,3 +431,34 @@ export const TIER_META: Record<Tier, { emoji: string; label: string; blurb: stri
   luxury: { emoji: '💎', label: 'Luxury', blurb: 'Premium comfort', planName: 'Luxury plan' },
   yours: { emoji: '🎯', label: 'Your budget', blurb: 'Fitted to your range', planName: 'budget-matched plan' },
 }
+
+// ---------------------------------------------------------------- plan helpers
+/** The option the itinerary follows: the one the traveller chose, else their own budget. */
+export const activeTier = (plan: TripPlan): Tier => plan.selected_tier ?? 'yours'
+
+/** The hotel the traveller picked for an option (or null while they haven't chosen). */
+export const pickedHotel = (plan: TripPlan, tier: Tier): Place | null => {
+  const id = plan.hotels?.[tier]
+  return (id && plan.places?.[id]) || null
+}
+
+export function stayLabel(plan: TripPlan, o: PlanOption): string {
+  const hotel = pickedHotel(plan, o.tier)
+  if (hotel) return hotel.name
+  const s = o.stay
+  return s ? `${s.kind.charAt(0).toUpperCase()}${s.kind.slice(1)} in ${s.area}` : 'Stay'
+}
+
+export function nightlyRange(o: PlanOption, currency: string): string | null {
+  const { nightly_min: lo, nightly_max: hi } = o.stay ?? {}
+  if (lo == null && hi == null) return null
+  if (lo != null && hi != null && lo !== hi) return `${money(lo, currency)}–${money(hi, currency)} / night`
+  return `${money(lo ?? hi, currency)} / night`
+}
+
+/** Plans made before timestamped schedules existed can't be shown in the new views. */
+export const isLegacyPlan = (plan: TripPlan) => !plan.schedules
+
+/** First day of the trip (YYYY-MM-DD), if known. */
+export const tripStart = (plan: TripPlan): string | null =>
+  plan.trip?.start_date ?? plan.schedules?.yours?.[0]?.date ?? null

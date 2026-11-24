@@ -45,7 +45,6 @@ export function PrivacyPolicy() {
         <li><strong>Account:</strong> your name, email address and a one-way hash of your password (we never store the password itself). If you use Google sign-in: your Google account ID and profile photo URL.</li>
         <li><strong>Preferences you set:</strong> home city, currency, usual number of travellers, budget range, interests, dietary needs, pace and theme.</li>
         <li><strong>Your trips:</strong> what you ask the assistant, its replies, and the plans it creates.</li>
-        <li><strong>Documents you upload:</strong> the text extracted from them (for example a booking confirmation).</li>
         <li><strong>Usage counts:</strong> how many AI requests you made each day, to enforce fair-use limits.</li>
         <li><strong>Consent:</strong> the date you accepted this policy and the Terms of Use.</li>
       </ul>
@@ -62,24 +61,23 @@ export function PrivacyPolicy() {
       <p>To work, TravelGenie sends limited data to these service providers:</p>
       <ul>
         <li><strong>Groq:</strong> your messages and trip details, to generate plans and answers with AI models.</li>
-        <li><strong>Jina AI:</strong> search queries and the text of documents you upload, to make them searchable.</li>
+        <li><strong>Jina AI:</strong> search queries, to find relevant passages in travel guides.</li>
         <li><strong>Neon:</strong> hosts the database where your account, trips and conversations are stored.</li>
         <li><strong>Vercel:</strong> hosts the website and runs the app.</li>
-        <li><strong>OpenWeatherMap, Wikivoyage and OpenStreetMap:</strong> only destination and city names, to fetch weather, places and maps.</li>
+        <li><strong>OpenWeatherMap, Wikivoyage, Wikimedia and OpenStreetMap:</strong> only destination and place names or map coordinates of public places, to fetch weather, places, photos, maps and travel times.</li>
       </ul>
       <p>These providers may process data outside India.</p>
 
       <h2>Sharing and privacy within the app</h2>
       <ul>
-        <li>Documents you upload are <strong>private to you</strong>: they are only used in your own answers.</li>
-        <li>A trip plan becomes visible to others only if you create a share link. Shared pages never include your conversation or uploaded documents, and you can stop sharing at any time.</li>
+        <li>A trip plan becomes visible to others only if you create a share link. Shared pages never include your conversation, and you can stop sharing at any time.</li>
       </ul>
 
       <h2>How long we keep it</h2>
       <p>
         We keep your data while your account exists. Deleting a trip deletes its plan and conversation.
-        Deleting your account permanently deletes your account, preferences, trips, conversations and uploaded
-        documents. Short-lived technical caches and service logs expire on their own.
+        Deleting your account permanently deletes your account, preferences, trips and
+        conversations. Short-lived technical caches and service logs expire on their own.
       </p>
 
       <h2>Your rights</h2>
@@ -137,12 +135,11 @@ export function TermsOfUse() {
       <ul>
         <li>Each account has a daily limit on AI requests so the service stays available for everyone.</li>
         <li>Don't misuse the service: no automated scraping, attempts to break security, or illegal, harmful or abusive content.</li>
-        <li>Only upload documents you have the right to use.</li>
       </ul>
 
       <h2>Your content</h2>
       <p>
-        You own what you write and upload. You allow TravelGenie to process it only to provide the service, as
+        You own what you write. You allow TravelGenie to process it only to provide the service, as
         described in the <Link to="/privacy">Privacy Policy</Link>. If you share a trip link, anyone with the link
         can view that plan.
       </p>

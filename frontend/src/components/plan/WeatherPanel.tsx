@@ -1,5 +1,5 @@
 import { Cloud, CloudRain, CloudSun, Droplets, Sun, Thermometer } from 'lucide-react'
-import type { TripPlan } from '../../lib/api'
+import { tripStart, type TripPlan } from '../../lib/api'
 
 export function weatherIcon(condition: string) {
   const c = condition.toLowerCase()
@@ -11,7 +11,7 @@ export function weatherIcon(condition: string) {
 
 export function WeatherPanel({ plan }: { plan: TripPlan }) {
   const w = plan.weather
-  const start = plan.days[0]?.date
+  const start = tripStart(plan)
   return (
     <div className="space-y-5">
       {w ? (

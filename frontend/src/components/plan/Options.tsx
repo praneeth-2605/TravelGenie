@@ -1,5 +1,6 @@
-import { ArrowRight, BedDouble, Car, Check, ExternalLink, Loader2, MapPin, TriangleAlert } from 'lucide-react'
-import { money, TIER_META, type PlanOption, type Tier, type TripPlan } from '../../lib/api'
+import { ArrowRight, BedDouble, Car, Check, Loader2, MapPin, TriangleAlert } from 'lucide-react'
+import { money, nightlyRange, pickedHotel, stayLabel, TIER_META, type PlanOption, type Tier, type TripPlan } from '../../lib/api'
+import { PlacePhoto } from './PlacePhoto'
 import { MODE_ICON } from './GettingThere'
 
 const SEGMENTS: { key: keyof PlanOption['breakdown']; label: string; color: string }[] = [
@@ -46,7 +47,9 @@ interface CardProps {
 function OptionCard({ o, plan, selected, choosing, disabled, onChoose }: CardProps) {
   const meta = TIER_META[o.tier]
   const cur = plan.currency
-  const place = o.stay.place
+  const hotel = pickedHotel(plan, o.tier)
+  const range = nightlyRange(o, cur)
+  const preview = hotel ?? o.stay.candidates.find(c => c.photo) ?? null
   const budgetMax = plan.trip.budget_max
   const gt = o.getting_there
   const GtIcon = gt ? MODE_ICON[gt.mode as keyof typeof MODE_ICON] ?? Car : null
@@ -92,21 +95,15 @@ function OptionCard({ o, plan, selected, choosing, disabled, onChoose }: CardPro
 
       <div className="mt-3 rounded-xl bg-surface-2 p-3">
         <div className="flex items-start gap-2.5">
-          <BedDouble className="mt-0.5 size-4 shrink-0 text-accent" />
+          {preview ? <PlacePhoto place={preview} label={false} className="size-12 shrink-0 rounded-lg" /> : <BedDouble className="mt-0.5 size-4 shrink-0 text-accent" />}
           <div className="min-w-0">
-            <div className="font-medium leading-snug">{o.stay.name}</div>
+            <div className="font-medium leading-snug">{stayLabel(plan, o)}</div>
             <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted">
-              {place?.area && <span className="flex items-center gap-0.5"><MapPin className="size-3" />{place.area}</span>}
-              {o.stay.nightly ? <span>{money(o.stay.nightly, cur)}/night</span> : null}
-              {place?.price && <span className="text-faint">listed: {place.price}</span>}
+              <span className="flex items-center gap-0.5"><MapPin className="size-3" />{hotel?.area ?? o.stay.area}</span>
+              {range && <span>{range}</span>}
+              {!hotel && o.stay.candidates.length > 0 && <span className="text-faint">{o.stay.candidates.length} hotels to choose from</span>}
             </div>
             {o.stay.why && <p className="mt-1.5 text-xs leading-relaxed text-muted">{o.stay.why}</p>}
-            {place?.url && (
-              <a href={place.url} target="_blank" rel="noreferrer"
-                className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-accent hover:underline">
-                Website <ExternalLink className="size-3" />
-              </a>
-            )}
           </div>
         </div>
       </div>
@@ -156,7 +153,7 @@ export function Options({ plan, selected, choosing, onChoose }: {
       </div>
       <p className="text-xs text-faint">
         All three options share the same sightseeing plan; they differ in how you travel, where you stay, food and extras.
-        Choose one to get a detailed plan with meals, daily spend and a booking checklist, then discuss it in the chat.
+        Choose one for a booking checklist and money tips, pick your hotel in Stays, then discuss it in the chat.
         Prices are estimates; check before booking.
       </p>
     </div>

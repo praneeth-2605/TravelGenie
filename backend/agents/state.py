@@ -68,6 +68,7 @@ class GraphState(TypedDict, total=False):
     weather: dict | None
     stays: list[dict]                 # candidate stays (Wikivoyage), by tier
     sights: list[dict]                # candidate sights
+    eats: list[dict]                  # candidate restaurants (for meal stops)
     map_center: dict | None
     transport: dict | None            # every way to get there (flight/train/bus/car/ferry)
     web_results: list[dict]           # web search (or Wikivoyage guide) results

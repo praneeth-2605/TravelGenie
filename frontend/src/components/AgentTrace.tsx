@@ -7,7 +7,7 @@ import type { AgentEvent, AgentName } from '../lib/api'
 
 export const META: Record<AgentName, { label: string; icon: typeof Search; job: string }> = {
   supervisor: { label: 'Supervisor', icon: Compass, job: 'Understands your request and assigns agents' },
-  research: { label: 'Research', icon: Search, job: 'Searches the knowledge base and the web' },
+  research: { label: 'Research', icon: Search, job: 'Reads travel guides and searches the web' },
   weather: { label: 'Weather', icon: CloudSun, job: 'Checks the forecast or seasonal norms' },
   stays: { label: 'Stays', icon: BedDouble, job: 'Finds real hostels and hotels by price' },
   sights: { label: 'Sightseeing', icon: Landmark, job: 'Finds local sights and activities' },

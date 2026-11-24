@@ -1,5 +1,5 @@
 import { BusFront, Car, Clock, ExternalLink, Plane, Ship, TrainFront, X } from 'lucide-react'
-import { money, TIER_META, type TransportMode, type TripPlan } from '../../lib/api'
+import { money, TIER_META, type TransportMode, type TripPlan, tripStart } from '../../lib/api'
 import { transportLinks } from '../../lib/links'
 import { LinkButtons } from './LinkButtons'
 
@@ -83,7 +83,7 @@ export function GettingThere({ plan }: { plan: TripPlan }) {
                 {m.book_via.length > 0 && (
                   <p className="text-xs text-muted">Book via <span className="font-medium text-ink">{[...new Set(m.book_via)].join(' · ')}</span></p>
                 )}
-                <LinkButtons className="mt-2" links={transportLinks(m.mode, t.origin, t.destination, plan.days[0]?.date, plan.travelers)} />
+                <LinkButtons className="mt-2" links={transportLinks(m.mode, t.origin, t.destination, tripStart(plan), plan.travelers)} />
                 {tiers.length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {tiers.map(tier => (

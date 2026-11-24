@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { ArrowRight, BedDouble, CalendarDays, LayoutGrid, Loader2, Map as MapIcon, TrainFront } from 'lucide-react'
-import { api, type TripPlan } from '../lib/api'
+import { api, isLegacyPlan, type TripPlan } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { Options } from '../components/plan/Options'
 import { Timeline } from '../components/plan/Timeline'
@@ -57,6 +57,9 @@ export function SharedTrip() {
   if (!data) return <div className="flex h-full flex-col">{header}<div className="grid flex-1 place-items-center"><Loader2 className="size-6 animate-spin text-faint" /></div></div>
 
   const { plan } = data
+  if (isLegacyPlan(plan)) {
+    return <div className="flex h-full flex-col">{header}<div className="grid flex-1 place-items-center p-8 text-center text-muted">This shared plan was made with an older version of TravelGenie and can no longer be shown. Ask the owner to re-plan and share it again.</div></div>
+  }
   return (
     <div className="flex h-full flex-col">
       {header}

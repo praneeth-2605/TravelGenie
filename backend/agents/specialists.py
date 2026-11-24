@@ -158,8 +158,9 @@ async def sights_agent(state: GraphState) -> dict:
     if not sights:
         emit("sights", "error", places.get("error") or "No sights found; the planner will use research only")
     else:
-        emit("sights", "done", f"{len(sights)} sights and activities · {mapped} on the map")
-    return {"sights": sights}  # the stays agent sets map_center (one writer per key per step)
+        emit("sights", "done", f"{len(sights)} sights · {len(places.get('eats') or [])} restaurants · {mapped} on the map")
+    eats = places.get("eats") or []
+    return {"sights": sights, "eats": eats}  # the stays agent sets map_center (one writer per key per step)
 
 
 # ------------------------------------------------------------------ booking
@@ -206,6 +207,8 @@ class TransportMode(BaseModel):
     price_max: float | None = None
     frequency: str | None = Field(None, description="e.g. '6 trains/day', 'hourly'")
     route: str | None = Field(None, description="Main stations/airports/route, e.g. 'Mumbai CSMT → Madgaon'")
+    arrive_at: str | None = Field(None, description="Exact arrival station / airport / bus stand at the destination")
+    arrive_time: str | None = Field(None, description="Typical arrival time HH:MM for the most common service")
     book_via: list[str] | None = Field(None, description="Where to book, e.g. IRCTC, redBus, Skyscanner")
     pros: str | None = None
     cons: str | None = None
@@ -247,10 +250,14 @@ realistic ranges for {month}. Name real stations/airports and real booking sites
 those countries (e.g. IRCTC, redBus, MakeMyTrip in India; JR, Willer in Japan; SNCF, FlixBus in
 Europe; Skyscanner/Google Flights for flights).
 
-Use the most common direct route for durations (not detours). Self-drive and taxi may be two
+Use the most common direct route for durations (not detours). For each mode give "arrive_at": the exact
+arrival station / airport / bus stand name at the destination (e.g. "Madgaon Junction (MAO)", "Goa
+International Airport, Dabolim (GOI)"), and "arrive_time": a typical arrival time (HH:MM) for the most
+common service, so the day can be planned from the moment the traveller arrives. Self-drive and taxi may be two
 entries with mode "car" and a "label". best_for is one word: budget, balanced, comfort or speed.
 
 Return ONLY JSON: {{"summary": "...", "modes": [{{"mode": "train", "label": null, "available": true,
+"arrive_at": "...", "arrive_time": "HH:MM",
 "duration": "...", "price_min": 0, "price_max": 0, "frequency": "...", "route": "...",
 "book_via": ["..."], "pros": "...", "cons": "...", "best_for": "budget"}}], "recommendation": "..."}}
 
@@ -278,7 +285,7 @@ async def transport_agent(state: GraphState) -> dict:
     notes = "\n".join(f"- {k.lstrip('_')}: {v}" for k, v in get_in.items())[:3200] or "(no guide notes)"
     month = (trip.get("start_date") or "")[:7] or "the travel dates"
     currency = (trip.get("currency") or "USD").upper()
-    cache_key = f"transport:{origin.lower().strip()}|{dest.lower().strip()}|{month}|{currency}"
+    cache_key = f"transport2:{origin.lower().strip()}|{dest.lower().strip()}|{month}|{currency}"
     cached = await asyncio.to_thread(db.cache_get, cache_key, 7 * 86400)
     if cached:
         emit("transport", "done", f"{', '.join(m['mode'] for m in cached['modes'] if m['available'])} compared"

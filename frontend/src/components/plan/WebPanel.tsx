@@ -36,7 +36,7 @@ export function WebPanel({ plan, sources, active }: { plan: TripPlan; sources: S
         )}
       </section>
       <section>
-        <h2 className="flex items-center gap-2 text-lg font-semibold"><BookOpen className="size-5 text-accent" /> Knowledge base sources</h2>
+        <h2 className="flex items-center gap-2 text-lg font-semibold"><BookOpen className="size-5 text-accent" /> Guide sources</h2>
         <p className="mb-3 mt-0.5 text-sm text-muted">Passages the Research agent used. Numbers match the citations in the itinerary.</p>
         <Sources sources={sources} active={active} />
       </section>

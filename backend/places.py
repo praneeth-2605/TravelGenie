@@ -40,7 +40,7 @@ _key_locks_guard = threading.Lock()
 
 # Final results go to the database cache, shared by every server instance (on Vercel
 # each instance has its own short-lived disk). Raw Wikivoyage pages stay on disk.
-_DB_CACHED = ("places:", "guide:", "geo:")
+_DB_CACHED = ("places2:", "guide:", "geo:")
 
 
 def _cached(key: str, fn):
@@ -214,12 +214,12 @@ def parse_listings(wikitext: str, area: str) -> list[dict]:
                 level2, level3 = title, ""
             else:
                 level3 = title
-        section_kind = {"see": "see", "do": "do", "sleep": "sleep"}.get(level2.strip().lower())
+        section_kind = {"see": "see", "do": "do", "sleep": "sleep", "eat": "eat"}.get(level2.strip().lower())
         kind = m.group(1).lower()
         if kind in ("listing", "marker"):
             # Generic listings: trust the section, not the template (avoids embassies, hospitals...).
             kind = section_kind or ""
-        if kind not in ("see", "do", "sleep") or (section_kind is None and level2.strip().lower() not in ("", "understand")
+        if kind not in ("see", "do", "sleep", "eat") or (section_kind is None and level2.strip().lower() not in ("", "understand")
                                                     and kind != m.group(1).lower()):
             continue
         item = {
@@ -232,6 +232,9 @@ def parse_listings(wikitext: str, area: str) -> list[dict]:
             "hours": _clean(fields.get("hours"), 70) or None,
             "url": (fields.get("url") or "").strip() or None,
             "description": _clean(fields.get("content") or fields.get("description")),
+            # Real photos: the listing's Wikidata item (photo, P18) or Commons image name.
+            "wikidata": (fields.get("wikidata") or "").strip() or None,
+            "image": _clean(fields.get("image"), 200) or None,
         }
         if kind == "sleep":
             item["tier"] = _sleep_tier(level3) or _sleep_tier(level2)  # None → decided later
@@ -459,11 +462,12 @@ def get_places(destination: str, max_pages: int = 5) -> dict:
         _assign_tiers([x for x in listings if x["kind"] == "sleep"])
         return {"pages": pages_used, "listings": listings}
 
-    data = _cached(f"places:{destination.lower().strip()}", build) or {"pages": [], "listings": []}
+    data = _cached(f"places2:{destination.lower().strip()}", build) or {"pages": [], "listings": []}
     geo = geocode(destination)
 
     stays = [x for x in data["listings"] if x["kind"] == "sleep"]
     sights = [x for x in data["listings"] if x["kind"] in ("see", "do")]
+    eats = [x for x in data["listings"] if x["kind"] == "eat"]
 
     def rank(x: dict) -> float:
         return (2 if x.get("lat") else 0) + (1 if x.get("price") else 0) + min(len(x.get("description") or ""), 200) / 100
@@ -471,12 +475,14 @@ def get_places(destination: str, max_pages: int = 5) -> dict:
     by_tier = {t: sorted((s for s in stays if s["tier"] == t), key=rank, reverse=True)[:8]
                for t in ("budget", "mid", "luxury")}
     sights = sorted(sights, key=rank, reverse=True)[:30]
-    for i, x in enumerate([*by_tier["budget"], *by_tier["mid"], *by_tier["luxury"], *sights]):
+    eats = sorted(eats, key=rank, reverse=True)[:24]
+    for i, x in enumerate([*by_tier["budget"], *by_tier["mid"], *by_tier["luxury"], *sights, *eats]):
         x["id"] = f"p{i + 1}"
     return {
         "center": geo,
         "stays": [*by_tier["budget"], *by_tier["mid"], *by_tier["luxury"]],
         "sights": sights,
+        "eats": eats,
         "pages": data["pages"],
         "error": None if data["listings"] else "No Wikivoyage listings found for this destination",
     }

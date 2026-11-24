@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { ArrowRight, BedDouble, CalendarDays, Check, CloudSun, Globe, Loader2, Map as MapIcon, TrainFront } from 'lucide-react'
-import { money, TIER_META, type Tier, type TripPlan } from '../../lib/api'
+import { money, nightlyRange, stayLabel, TIER_META, type Tier, type TripPlan } from '../../lib/api'
 import { MODE_ICON, priceRange } from './GettingThere'
 import { weatherIcon } from './WeatherPanel'
 
@@ -49,7 +49,7 @@ export function Overview({ plan, onOpen, onChoose, choosing, selected }: {
                 <div className="mt-1 text-2xl font-semibold tabular-nums">{money(o.total, cur)}</div>
                 <div className="text-xs text-muted">{money(o.per_person, cur)} per person</div>
                 <div className="mt-3 space-y-1 text-sm">
-                  <div className="flex items-center gap-1.5"><BedDouble className="size-3.5 shrink-0 text-faint" /><span className="truncate">{o.stay.name}</span></div>
+                  <div className="flex items-center gap-1.5"><BedDouble className="size-3.5 shrink-0 text-faint" /><span className="truncate">{stayLabel(plan, o)}</span></div>
                   {o.getting_there && GtIcon && (
                     <div className="flex items-center gap-1.5"><GtIcon className="size-3.5 shrink-0 text-faint" /><span className="truncate capitalize">{o.getting_there.mode}{o.getting_there.duration ? ` · ${o.getting_there.duration}` : ''}</span></div>
                   )}
@@ -106,13 +106,13 @@ export function Overview({ plan, onOpen, onChoose, choosing, selected }: {
           ) : <p className="text-sm text-muted">Tell me where you're starting from to compare flights, trains, buses and driving.</p>}
         </SectionCard>
 
-        <SectionCard title="Hotels & hostels" icon={BedDouble} onOpen={() => onOpen('stays')} cta={`All ${plan.stay_candidates.length} stays`}>
+        <SectionCard title="Hotels & hostels" icon={BedDouble} onOpen={() => onOpen('stays')} cta="Choose your hotel">
           <ul className="space-y-2">
             {plan.options.map(o => (
               <li key={o.tier} className="text-sm">
-                <div className="text-xs text-faint">{TIER_META[o.tier].emoji} {o.label} pick</div>
-                <div className="flex items-baseline gap-2"><span className="truncate font-medium">{o.stay.name}</span>
-                  {o.stay.nightly ? <span className="ml-auto shrink-0 text-xs text-muted tabular-nums">{money(o.stay.nightly, cur)}/night</span> : null}</div>
+                <div className="text-xs text-faint">{TIER_META[o.tier].emoji} {o.label} · {o.stay.candidates.length} to choose from</div>
+                <div className="flex items-baseline gap-2"><span className="truncate font-medium">{stayLabel(plan, o)}</span>
+                  {nightlyRange(o, cur) ? <span className="ml-auto shrink-0 text-xs text-muted tabular-nums">{nightlyRange(o, cur)}</span> : null}</div>
               </li>
             ))}
           </ul>

@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal
 from urllib.parse import urlparse
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -30,20 +30,18 @@ from sse_starlette.sse import EventSourceResponse
 
 from backend import auth, db, export, history
 from backend.agents.graph import build_graph, generate_details
-from backend.agents.plan import money
+from backend.agents.plan import build_markers, money, schedule_for
 from backend.api.routes_account import router as account_router
 from backend.config import ROOT, settings
 from backend.llm import text_of
 from backend.rag import models
-from backend.rag.ingest import chunk_file
-from backend.rag.pipeline import retrieve
 from backend.rag.seed import seed_guides
+from backend.skills import catalog as skills_catalog
 from backend.rag.store import get_store
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("travelgenie")
 
-MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 DIST = ROOT / "frontend" / "dist"
 
 
@@ -258,6 +256,33 @@ async def get_trip(trip_id: str, user=Depends(auth.current_user)):
     return trip
 
 
+class HotelBody(BaseModel):
+    tier: Literal["budget", "luxury", "yours"]
+    place_id: str | None = Field(None, max_length=20)   # null = "not chosen yet"
+
+
+@app.post("/api/trips/{trip_id}/hotel")
+async def choose_hotel(trip_id: str, body: HotelBody, user=Depends(auth.current_user)):
+    """Pick (or clear) the stay for one option; its timestamped schedule is rebuilt around the
+    hotel's real location. Pure code + routing, no AI request used."""
+    trip = _owned_trip(user, trip_id)
+    plan = trip.get("plan")
+    if not plan or "schedules" not in plan:
+        raise HTTPException(409, "This trip has no plan yet.")
+    option = next((o for o in plan["options"] if o["tier"] == body.tier), None)
+    if option is None:
+        raise HTTPException(404, "Option not found.")
+    if body.place_id and body.place_id not in option["stay"]["candidate_ids"]:
+        raise HTTPException(404, "That stay isn't one of this option's choices.")
+    plan.setdefault("hotels", {})[body.tier] = body.place_id
+    plan["schedules"][body.tier] = await asyncio.to_thread(schedule_for, plan, body.tier)
+    plan["markers"] = build_markers(plan)
+    await asyncio.to_thread(db.update_trip, trip_id, plan=plan)
+    async with graph_session() as graph:   # keep the agents' copy of the plan in sync
+        await graph.aupdate_state({"configurable": {"thread_id": trip_id}}, {"plan": plan}, as_node="planner")
+    return {"plan": plan}
+
+
 class SelectBody(BaseModel):
     tier: Literal["budget", "luxury", "yours"]
 
@@ -362,69 +387,17 @@ def export_trip(trip_id: str, format: Literal["pdf", "ics", "md"],
     if format == "pdf":
         body, mime, ext = export.pdf(plan, option), "application/pdf", "pdf"
     elif format == "ics":
-        body, mime, ext = export.ics(plan, trip_id).encode(), "text/calendar; charset=utf-8", "ics"
+        body, mime, ext = export.ics(plan, trip_id, option).encode(), "text/calendar; charset=utf-8", "ics"
     else:
         body, mime, ext = export.markdown(plan).encode(), "text/markdown; charset=utf-8", "md"
     name = f"travelgenie-{slug}{'-' + option if option else ''}.{ext}"
     return Response(body, media_type=mime, headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
-# ------------------------------------------------------------------ knowledge
-@app.get("/api/documents")
-async def list_documents(user=Depends(auth.current_user)):
-    """Public guides + cached web results, and this user's own uploads."""
-    return await asyncio.to_thread(get_store().documents, user["id"])
-
-
-@app.post("/api/documents")
-async def upload_document(file: UploadFile = File(...), destination: str = Form(""),
-                          user=Depends(auth.current_user)):
-    data = await file.read()
-    if len(data) > MAX_UPLOAD_BYTES:
-        raise HTTPException(413, "File is larger than 20MB.")
-    try:
-        # owner: uploads are private to this user (never shown in other users' answers)
-        chunks = await asyncio.to_thread(chunk_file, file.filename or "upload", data, "upload",
-                                         destination=destination or None, title=file.filename,
-                                         owner=user["id"])
-    except ValueError as exc:
-        raise HTTPException(415, str(exc))
-    except Exception as exc:
-        raise HTTPException(422, f"Could not read file: {exc}")
-    if not chunks:
-        raise HTTPException(422, "No text could be extracted (scanned PDFs need OCR first).")
-    await asyncio.to_thread(get_store().upsert, chunks)
-    return {"doc_id": chunks[0].metadata["doc_id"], "chunks": len(chunks), "filename": file.filename}
-
-
-@app.delete("/api/documents/{doc_id}")
-async def delete_document(doc_id: str, user=Depends(auth.current_user)):
-    """Users can delete only their own uploads (not the guides or other users' files)."""
-    exists, owner = await asyncio.to_thread(get_store().doc_owner, doc_id)
-    if not exists or owner != user["id"]:
-        raise HTTPException(404, "Document not found.")
-    await asyncio.to_thread(get_store().delete_document, doc_id)
-    return {"deleted": doc_id}
-
-
-class SearchRequest(BaseModel):
-    query: str = Field(min_length=1, max_length=500)
-    destination: str | None = None
-    allow_web: bool = False
-
-
-@app.post("/api/search")
-async def search(req: SearchRequest, user=Depends(auth.current_user)):
-    await asyncio.to_thread(use_ai_request, user)
-    r = await asyncio.to_thread(retrieve, req.query, 6, req.allow_web, req.destination,
-                                bool(settings.groq_api_key), user["id"])
-    return {"queries": r.queries, "destination": r.destination, "used_web": r.used_web,
-            "trace": r.trace, "sources": [s.to_dict() for s in r.sources]}
-
-
 @app.get("/api/health")
 async def health():
     return {"ok": True, "missing_keys": settings.missing_keys(), "chunks": get_store().count(),
+            "skills": [s["name"] for s in skills_catalog()],
             "model": settings.groq_model, "google_login": bool(settings.google_client_id)}
 
 

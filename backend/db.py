@@ -330,8 +330,20 @@ def _trip(row: sqlite3.Row, full: bool = False) -> dict:
     else:
         options = (plan or {}).get("options") or []
         d["summary"] = (plan or {}).get("summary")
+        hotels = (plan or {}).get("hotels") or {}
+        places = (plan or {}).get("places") or {}
+
+        def stay(o: dict) -> str | None:
+            s = o.get("stay") or {}
+            picked = places.get(hotels.get(o.get("tier")) or "")
+            if picked:
+                return picked.get("name")
+            if s.get("name"):                      # plans made before hotel choice existed
+                return s["name"]
+            return f"{s.get('kind', 'Stay').capitalize()} in {s['area']}" if s.get("area") else None
+
         d["options"] = [{"tier": o.get("tier"), "label": o.get("label"), "total": o.get("total"),
-                         "stay": (o.get("stay") or {}).get("name")} for o in options]
+                         "stay": stay(o)} for o in options]
         d["currency"] = (plan or {}).get("currency")
         d["map_center"] = (plan or {}).get("map_center")
     return d

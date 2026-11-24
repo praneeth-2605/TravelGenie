@@ -14,6 +14,7 @@ returns a structured TripPlan; questions, bookings and chat go to the Writer.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -23,7 +24,8 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 
-from backend.agents.plan import OptionDetails, TripPlan, enrich, money
+from backend.agents.plan import (OptionDetails, TripPlan, build_markers, enrich, money, schedule_for,
+                                 stay_label, step_line)
 from backend.agents.specialists import SPECIALISTS, emit
 from backend.agents.state import GraphState, RoutingDecision
 from backend.llm import ask_json, fast_llm, planner_llm, text_of, writer_llm
@@ -55,6 +57,11 @@ Rules:
 - "revise": change the existing plan (cheaper, more relaxed, swap a day, different budget, more
   days). Call only what the change needs; stays/sights only if the destination changed.
 - "question": a specific travel question with no new plan wanted. Usually research only.
+- IF A PLAN EXISTS: answering is the default. Use "revise" ONLY when the traveller clearly asks to
+  change the plan (change, swap, replace, add, remove, skip, make it cheaper/relaxed, extend, shorten,
+  different hotel area, re-plan…). Questions about the plan ("how do I get from the station?", "is the
+  fort open on Monday?", "what should I wear?") are "question" and need NO specialists unless they ask
+  for new outside facts (then research or transport).
 - "book": make simulated bookings. Use booking.
 - "chat": greetings / small talk. No specialists.
 - Merge new details into the trip brief; keep earlier details unless the user changed them.
@@ -87,6 +94,13 @@ async def supervisor(state: GraphState) -> dict:
         trip["travelers"] = profile["default_travelers"]
 
     intent = decision.intent
+    last = text_of(state["messages"][-1].content) if state.get("messages") else ""
+    same_place = not trip.get("destination") or not old_trip.get("destination") or \
+        trip["destination"].lower() == old_trip["destination"].lower()
+    if state.get("plan") and intent in ("plan", "revise") and same_place and not _CHANGE.search(last):
+        log.info("supervisor wanted to %s, but the message asks for no change: answering instead", intent)
+        intent = "question"
+        trip = {**old_trip, **{k: v for k, v in trip.items() if k == "origin"}}
     agents = list(dict.fromkeys(decision.agents or []))
     if intent == "chat":
         agents = []
@@ -95,8 +109,8 @@ async def supervisor(state: GraphState) -> dict:
     elif intent == "revise" and not state.get("plan"):
         intent = "plan"
         agents = ["research", "weather", "stays", "sights", "transport", "web"]
-    elif intent in ("question",) and not agents:
-        agents = ["research"]
+    elif intent == "question" and not agents and not state.get("plan"):
+        agents = ["research"]          # with a plan in hand, the writer can answer from it directly
     # A new destination needs fresh places, weather and transport.
     if trip.get("destination") and old_trip.get("destination") and \
             trip["destination"].lower() != old_trip["destination"].lower() and intent in ("plan", "revise"):
@@ -113,6 +127,14 @@ async def supervisor(state: GraphState) -> dict:
     if "research" in agents:
         update["sources"] = []  # keep earlier sources when research isn't re-run
     return update
+
+
+# Words that mean "change my plan". Without one, a message about an existing plan is answered, not re-planned.
+_CHANGE = re.compile(
+    r"\b(chang\w*|swap\w*|replac\w*|add\w*|remov\w*|drop\w*|skip\w*|instead|cheaper|costlier|budget|"
+    r"relax\w*|faster|slower|shorter|longer|extend\w*|shorten\w*|reduc\w*|increas\w*|updat\w*|modif\w*|"
+    r"re-?plan\w*|redo|rework|move|reschedul\w*|switch\w*|includ\w*|exclud\w*|upgrad\w*|downgrad\w*|"
+    r"another|different|new plan|more days|fewer days|less (?:walking|travel)|day \d+ (?:to|with))\b", re.I)
 
 
 def _future_date(value: str | None) -> str | None:
@@ -178,49 +200,62 @@ Return exactly this shape (all money in "currency", totals for the WHOLE party):
 {{
  "summary": "2-3 sentences",
  "answer": "direct 1-3 line answer if the traveller asked a question, else null",
- "assumptions": ["anything you had to assume (dates, exchange rates, nights)"],
+ "assumptions": ["anything you had to assume (dates, exchange rates, nights, arrival times)"],
  "currency": "{currency}",
  "days": [{{"day": 1, "title": "theme", "area": "neighbourhood",
-           "items": [{{"time": "Morning", "title": "what", "description": "1-2 practical sentences",
-                       "place_id": "p12 or null", "cost": 0, "cite": [1]}}]}}],
+           "stops": [{{"kind": "sight", "place_id": "p12", "duration_min": 90,
+                       "note": "one practical tip: what to see, tickets, best time", "cost": 0, "cite": [1]}},
+                     {{"kind": "meal", "place_id": "p40", "title": "Lunch", "duration_min": 60,
+                       "note": "what to order", "cost": 0}}]}}],
  "options": [
    {{"tier": "budget", "title": "catchy name", "total": 0,
      "breakdown": {{"travel": 0, "stay": 0, "food": 0, "transport": 0, "activities": 0, "other": 0}},
-     "getting_there": {{"mode": "train", "detail": "which service/class and route", "duration": "...", "cost": 0}},
-     "stay": {{"place_id": "p3 or null", "name": "", "nightly": 0, "why": "why it suits"}},
-     "alt_stay_ids": ["p4"], "highlights": ["how this option feels: dining, transport, extras"],
-     "fits_budget": null, "note": null}},
+     "getting_there": {{"mode": "train", "detail": "service/class and route", "duration": "...", "cost": 0,
+                       "arrive_at": "exact arrival station/airport/bus stand name", "arrive_time": "HH:MM",
+                       "depart_from_destination": "station/airport for the return"}},
+     "stay": {{"area": "neighbourhood", "kind": "hostel dorm / guesthouse / 3-star hotel / resort",
+              "nightly_min": 0, "nightly_max": 0, "why": "why this area and type suit this option",
+              "candidate_ids": ["p3", "p5", "p7"]}},
+     "highlights": ["how this option feels: dining, transport, extras"], "fits_budget": null, "note": null}},
    {{"tier": "luxury", ...}},
    {{"tier": "yours", ...}}
  ],
  "packing": ["..."], "weather_note": "...", "tips": ["..."]
 }}
 
-Rules:
-- days: exactly {days} days. 3-4 items per day (Morning/Afternoon/Evening, optional Night).
-  Use the SIGHT candidates (put their id in place_id) and group nearby sights on the same day.
-  Pace: {pace}. Interests: {interests}. Dietary: {dietary}.
-  Cite knowledge sources as numbers in "cite" when an item relies on them; never invent numbers.
-- The day plan is shared; the three options differ in stay, food, transport and extras.
-- budget option: the cheapest sensible trip. Stay MUST be a budget-tier candidate (hostel/guesthouse).
-- luxury option: premium comfort (best stay, private transfers, fine dining, special experiences).
-  Stay MUST be a luxury-tier candidate. Its total must be clearly the highest of the three.
-- yours option: {yours_rule} Pick the BEST stay candidate (any tier) that fits what's left after
-  food, transport and activities, and say why it is the best match in "why". Set fits_budget.
-- getting_there: pick the travel mode that suits each option from the TRANSPORT comparison
-  (budget → cheapest e.g. bus/sleeper train; luxury → fastest/most comfortable e.g. flight; yours →
-  best value for the budget). "travel" in the breakdown and getting_there.cost = ROUND TRIP for all
-  travellers. If origin is unknown, set getting_there null and travel 0, and say so in assumptions.
-- Prefer candidates' listed prices; convert to {currency} with approximate rates (note them in
-  assumptions). Nights = {nights}. Travellers = {travelers}. Breakdown must add up to total.
-- If no candidate fits, set place_id null and name a realistic type (e.g. "Dorm bed in Anjuna").
-- Use only facts from the candidates and sources for specific names; keep everything realistic.
+Rules for the days (the app turns them into a timestamped schedule with real travel times):
+- Exactly {days} days. Each day is an ORDERED list of stops; do NOT write clock times.
+- Every "sight"/"activity" stop MUST use a SIGHT candidate id. Every "meal" stop should use an EAT
+  candidate id near that day's sights; if none fits, set place_id null and title "Lunch"/"Dinner".
+  NEVER invent place names: unlisted places are flagged as unverified to the traveller.
+- 3-5 sights or activities per day plus lunch and dinner, in a sensible geographic order (nearby
+  places together, no zig-zagging). Pace: {pace}. Interests: {interests}. Dietary: {dietary}.
+- Respect hours and the best time of day (sunset cruises/viewpoints in the evening, markets in the
+  morning, museums within opening hours). Realistic duration_min for each stop.
+- Day 1 starts on arrival, the last day ends with departure: plan fewer stops on those days.
+- Cite knowledge sources as numbers in "cite" only when a stop relies on them.
+
+Rules for the options:
+- The day plan is shared; options differ in travel mode, stay, food and extras.
+- budget: cheapest sensible trip; stay candidates from [budget]. luxury: premium (top stays, flights or
+  private transfers, fine dining, special experiences), candidates from [luxury], total clearly highest.
+- yours: {yours_rule} Choose the best-value stay type and area; candidates of any tier that fit. Set fits_budget.
+- stay: recommend an AREA and TYPE with a nightly price range; list 3-5 real STAY candidate ids that
+  match (the traveller picks one). Do not commit to a single hotel.
+- getting_there: from the TRANSPORT comparison (budget → cheapest; luxury → fastest/most comfortable;
+  yours → best value). Use the real arrival station/airport names given there. travel cost = ROUND TRIP
+  for all travellers. If origin is unknown, set getting_there null and travel 0.
+- Prefer listed prices; convert with approximate rates (note in assumptions). Nights = {nights}.
+  Travellers = {travelers}. Breakdown must add up to total.
 {revise_block}
-STAY candidates (id [tier] name — area — price — note):
+STAY candidates (id [tier] name — area — price):
 {stays}
 
 SIGHT candidates (id [kind] name — area — hours/price — note):
 {sights}
+
+EAT candidates (id name — area — price — note):
+{eats}
 
 TRANSPORT (per person, one way, {currency}):
 {transport}
@@ -237,15 +272,23 @@ def _fmt_transport(t: dict | None) -> str:
     rows = [f"From {t.get('origin')} (~{t.get('distance_km') or '?'} km):"]
     for m in t["modes"]:
         if m.get("available"):
-            rows.append(f"- {m['mode']}: {m.get('duration') or '?'}, {m.get('price_min')}-{m.get('price_max')}, "
-                        f"{m.get('route') or ''}")
+            rows.append(f"- {m['mode']}{(' ' + m['label']) if m.get('label') else ''}: {m.get('duration') or '?'}, "
+                        f"{m.get('price_min')}-{m.get('price_max')}, {m.get('route') or ''}"
+                        f"{(' · arrives at ' + m['arrive_at']) if m.get('arrive_at') else ''}"
+                        f"{(' ~' + m['arrive_time']) if m.get('arrive_time') else ''}")
     return "\n".join(rows)
 
 
 def _fmt_stays(stays: list[dict]) -> str:
     rows = [f"{s['id']} [{s['tier']}] {s['name']} — {s.get('area') or ''} — {s.get('price') or 'price n/a'}"
-            f" — {(s.get('description') or '')[:70]}" for s in stays[:18]]
-    return "\n".join(rows) or "(none found: use realistic estimates and set place_id null)"
+            for s in stays[:20]]
+    return "\n".join(rows) or "(none found: recommend an area and type; leave candidate_ids empty)"
+
+
+def _fmt_eats(eats: list[dict]) -> str:
+    rows = [f"{e['id']} {e['name']} — {e.get('area') or ''} — {e.get('price') or ''} — {(e.get('description') or '')[:60]}"
+            for e in eats[:16]]
+    return "\n".join(rows) or "(none found: use generic meal stops with place_id null)"
 
 
 def _fmt_sights(sights: list[dict]) -> str:
@@ -270,9 +313,10 @@ def _compact_plan(plan: dict) -> str:
     cur = plan.get("currency", "")
     lines = ["Current plan:"]
     for o in plan.get("options", []):
-        lines.append(f"- {o['tier']}: {money(o['total'], cur)}, stay {o['stay']['name']}")
+        lines.append(f"- {o['tier']}: {money(o['total'], cur)}, {stay_label(o, cur)}")
     for d in plan.get("days", []):
-        lines.append(f"- Day {d['day']} {d['title']}: " + "; ".join(i["title"] for i in d["items"]))
+        stops = d.get("stops") or d.get("items") or []
+        lines.append(f"- Day {d['day']} {d['title']}: " + "; ".join(f"{s.get('title')} ({s.get('place_id') or '-'})" for s in stops))
     return "\n".join(lines)
 
 
@@ -329,6 +373,7 @@ async def planner(state: GraphState) -> dict:
                       f"ask to change.\n{_compact_plan(state['plan'])}\n" if revising else ""),
         stays=_fmt_stays(state.get("stays") or []),
         sights=_fmt_sights(state.get("sights") or []),
+        eats=_fmt_eats(state.get("eats") or []),
         weather=_fmt_weather(state.get("weather"), state.get("findings") or {}),
         sources=_fmt_sources(state.get("sources") or []),
         transport=_fmt_transport(state.get("transport")),
@@ -356,11 +401,26 @@ async def planner(state: GraphState) -> dict:
     if hi:
         yours.fits_budget = (lo or 0) * 0.97 <= yours.total <= hi * 1.03
 
-    data = enrich(plan, {**trip, "currency": currency}, state.get("stays") or [], state.get("sights") or [],
-                  state.get("sources") or [], state.get("map_center"), state.get("weather"),
-                  state.get("transport"), state.get("web_results"))
-    # A revision keeps the traveller's chosen option (its details are regenerated on demand).
+    emit("planner", "running", "Adding photos and timing every stop with real travel times")
+    data = await asyncio.to_thread(
+        enrich, plan, {**trip, "currency": currency},
+        stays=state.get("stays") or [], sights=state.get("sights") or [], eats=state.get("eats") or [],
+        sources=state.get("sources") or [], center=state.get("map_center"), weather=state.get("weather"),
+        transport=state.get("transport"), web_results=state.get("web_results"),
+        pace=profile.get("pace") or "moderate")
+    # A revision keeps the traveller's chosen option and hotels where they still exist.
     data["selected_tier"] = state.get("selected_tier") if revising else None
+    if revising:
+        old_hotels = (state["plan"].get("hotels") or {})
+        changed = False
+        for tier, hid in old_hotels.items():
+            option = next((o for o in data["options"] if o["tier"] == tier), None)
+            if hid and option and hid in option["stay"]["candidate_ids"]:
+                data["hotels"][tier] = hid
+                changed = True
+        if changed:
+            data["schedules"] = {t: await asyncio.to_thread(schedule_for, data, t) for t in data["schedules"]}
+            data["markers"] = build_markers(data)
     emit("planner", "done", " · ".join(f"{o['label']} {money(o['total'], currency)}" for o in data["options"]))
     update = {"plan": data, "messages": [AIMessage(_chat_summary(data))]}
     if not revising:
@@ -377,57 +437,53 @@ def _chat_summary(plan: dict) -> str:
     parts.append(plan["summary"])
     parts.append("")
     for o in plan["options"]:
-        parts.append(f"- **{o['label']}** ({o['title']}): {money(o['total'], cur)} · stay at {o['stay']['name']}")
+        parts.append(f"- **{o['label']}** ({o['title']}): {money(o['total'], cur)} · {stay_label(o, cur)}")
     return "\n".join(parts)
 
 
 # ======================================================================= option details
 DETAILS_PROMPT = """You are TravelGenie's trip concierge. The traveller has CHOSEN the "{label}" option
-below. Expand it into a detailed, practical plan as ONE JSON object:
+below; its timestamped day-by-day schedule is already built. Add the practical layer as ONE JSON object:
 {{
  "overview": "3-4 sentences: what this option feels like and why it fits",
- "days": [{{"day": 1, "summary": "one line", "meals": [{{"meal": "Breakfast", "place": "specific place or area",
-            "try": "what to order", "cost": 0}}], "getting_around": "how to move between today's stops + cost",
-            "spend": 0, "tip": "one practical tip"}}],
  "booking_checklist": [{{"item": "...", "when": "how far ahead", "where": "site/app/desk", "cost": 0}}],
  "money_tips": ["..."],
  "good_to_know": ["..."]
 }}
-Rules: one entry per day ({days} days) matching the day plan; 2-3 meals per day that suit the
-option's comfort level and the traveller's diet ({dietary}); costs in {currency} for the WHOLE party
-({travelers} people); "spend" = that day's total (meals + local transport + activities). The booking
-checklist starts with getting there ({getting_there}) and the stay ({stay}). Be specific and realistic;
-use only well-known or listed places for names, otherwise describe the kind of place and the area.
+Rules: the booking checklist is in the order to book: getting there ({getting_there}), the stay
+({stay}), then any tickets/tours from the schedule that need booking ahead. Costs in {currency} for the
+WHOLE party ({travelers} people). Be specific and realistic; name only places from the schedule.
+Diet: {dietary}.
 
 Chosen option:
 {option}
 
-Day plan:
-{days_text}"""
+Schedule:
+{schedule}"""
 
 
 async def generate_details(plan: dict, tier: str, profile: dict | None = None) -> dict:
-    """Expand one option into a detailed plan (meals, getting around, spend, bookings)."""
+    """The concierge layer for a chosen option: overview, booking checklist, tips."""
     option = next(o for o in plan["options"] if o["tier"] == tier)
     cur = plan.get("currency", "")
     gt = option.get("getting_there") or {}
-    days_text = "\n".join(
-        f"Day {d['day']} ({d.get('area') or ''}) {d['title']}: " + "; ".join(f"{i['time']} {i['title']}" for i in d["items"])
-        for d in plan["days"])
+    hotel = plan.get("places", {}).get((plan.get("hotels") or {}).get(tier) or "")
+    schedule = "\n".join(
+        f"Day {d['day']} {d['title']}: " + "; ".join(step_line(s) for s in d["steps"] if s["kind"] != "travel")
+        for d in (plan.get("schedules") or {}).get(tier, []))
     compact = {k: option.get(k) for k in ("title", "total", "breakdown", "highlights")}
-    compact["stay"] = {"name": option["stay"]["name"], "nightly": option["stay"].get("nightly"),
-                       "area": (option["stay"].get("place") or {}).get("area")}
     prompt = DETAILS_PROMPT.format(
-        label=option["label"], days=len(plan["days"]), currency=cur, travelers=plan.get("travelers", 1),
+        label=option["label"], currency=cur, travelers=plan.get("travelers", 1),
         dietary=(profile or {}).get("dietary") or "no restrictions",
         getting_there=f"{gt.get('mode')}: {gt.get('detail')}" if gt else "not specified",
-        stay=option["stay"]["name"], option=json.dumps(compact, ensure_ascii=False), days_text=days_text)
+        stay=hotel["name"] if hotel else stay_label(option, cur),
+        option=json.dumps(compact, ensure_ascii=False), schedule=schedule[:4000])
     details = await ask_json(planner_llm(), [HumanMessage(prompt)], OptionDetails)
     return details.model_dump(by_alias=True)
 
 
 def chosen_block(plan: dict | None, tier: str | None) -> str:
-    """Context about the traveller's chosen option, for the writer."""
+    """Context about the traveller's chosen option and its schedule, for the writer."""
     if not plan or not tier:
         return ""
     o = next((x for x in plan.get("options", []) if x["tier"] == tier), None)
@@ -435,18 +491,16 @@ def chosen_block(plan: dict | None, tier: str | None) -> str:
         return ""
     cur = plan.get("currency", "")
     gt = o.get("getting_there") or {}
+    hotel = plan.get("places", {}).get((plan.get("hotels") or {}).get(tier) or "")
     lines = [f'The traveller CHOSE the "{o["label"]}" option ({o["title"]}), total {money(o["total"], cur)}.',
-             f"Stay: {o['stay']['name']} ({money(o['stay'].get('nightly'), cur)}/night). {o['stay'].get('why', '')}"]
+             f"Stay: {hotel['name'] + ' (' + (hotel.get('area') or '') + ')' if hotel else stay_label(o, cur) + ' (no hotel picked yet)'}."]
     if gt:
         lines.append(f"Getting there: {gt.get('mode')}: {gt.get('detail')} ({gt.get('duration') or ''}), "
-                     f"{money(gt.get('cost'), cur)} return.")
+                     f"arriving at {gt.get('arrive_at') or '?'}, {money(gt.get('cost'), cur)} return.")
     lines.append("Breakdown: " + ", ".join(f"{k} {money(v, cur)}" for k, v in o["breakdown"].items()))
-    det = o.get("details")
-    if det:
-        for d in det["days"]:
-            meals = "; ".join(f"{m['meal']} at {m['place']}" for m in d.get("meals", []))
-            lines.append(f"Day {d['day']}: {d['summary']} Meals: {meals}. Getting around: {d.get('getting_around') or ''}")
-    return "\n".join(lines)
+    for d in (plan.get("schedules") or {}).get(tier, []):
+        lines.append(f"Day {d['day']} {d['title']}: " + " | ".join(step_line(s) for s in d["steps"]))
+    return "\n".join(lines)[:6000]
 
 
 # ======================================================================= writer

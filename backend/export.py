@@ -8,9 +8,8 @@ from datetime import date, datetime, timedelta, timezone
 
 from fpdf import FPDF
 
-from backend.agents.plan import money, to_markdown
+from backend.agents.plan import TIER_LABEL, active_tier, money, stay_label, to_markdown
 
-TIME_SLOTS = {"morning": (9, 0), "afternoon": (13, 30), "evening": (18, 30), "night": (21, 0)}
 
 
 # ------------------------------------------------------------------ markdown
@@ -36,34 +35,41 @@ def _fold(line: str) -> str:
     return "\r\n".join(out)
 
 
-def ics(plan: dict, trip_id: str) -> str:
-    start = None
-    if plan.get("days") and plan["days"][0].get("date"):
-        start = date.fromisoformat(plan["days"][0]["date"])
-    start = start or (date.today() + timedelta(days=14))
+def _hm(s: str | None) -> tuple[int, int] | None:
+    m = re.match(r"(\d{1,2}):(\d{2})", s or "")
+    return (int(m.group(1)) % 24, int(m.group(2))) if m else None
+
+
+def ics(plan: dict, trip_id: str, option_tier: str | None = None) -> str:
+    """One calendar event per stop (and travel leg) at its scheduled time."""
+    tier = option_tier or active_tier(plan)
+    days = (plan.get("schedules") or {}).get(tier) or []
+    start = date.fromisoformat(days[0]["date"]) if days and days[0].get("date") else date.today() + timedelta(days=14)
     dest = plan.get("trip", {}).get("destination", "Trip")
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//TravelGenie//Trip Planner//EN",
              "CALSCALE:GREGORIAN", f"X-WR-CALNAME:{_ics_escape(dest)} trip"]
-    for d in plan.get("days", []):
+    for d in days:
         day = start + timedelta(days=d["day"] - 1)
-        for i, item in enumerate(d["items"]):
-            h, m = TIME_SLOTS.get(item["time"].strip().lower(), (9 + 3 * i, 0))
-            clock = re.match(r"(\d{1,2})[:.](\d{2})", item["time"])
-            if clock:
-                h, m = int(clock.group(1)) % 24, int(clock.group(2))
-            begin = datetime(day.year, day.month, day.day, h, m)
-            place = item.get("place") or {}
-            desc = item.get("description", "")
+        for i, s in enumerate(d["steps"]):
+            begin_hm = _hm(s.get("time"))
+            if not begin_hm:
+                continue
+            begin = datetime(day.year, day.month, day.day, *begin_hm)
+            minutes = s.get("minutes") or (20 if s["kind"] in ("start", "end", "depart") else 60)
+            desc = s.get("detail") or ""
+            if s["kind"] == "travel":
+                desc = f"{s.get('distance_km')} km · {s.get('minutes')} min by {s.get('mode')}"
+            place = s.get("place") or {}
             if place.get("hours"):
                 desc += f"\nHours: {place['hours']}"
             lines += [
                 "BEGIN:VEVENT",
-                f"UID:{trip_id}-{d['day']}-{i}@travelgenie",
+                f"UID:{trip_id}-{tier}-{d['day']}-{i}@travelgenie",
                 f"DTSTAMP:{stamp}",
                 f"DTSTART:{begin:%Y%m%dT%H%M%S}",
-                f"DTEND:{begin + timedelta(hours=2, minutes=30):%Y%m%dT%H%M%S}",
-                _fold(f"SUMMARY:{_ics_escape(item['title'])}"),
+                f"DTEND:{begin + timedelta(minutes=minutes):%Y%m%dT%H%M%S}",
+                _fold(f"SUMMARY:{_ics_escape(s['title'])}"),
                 _fold(f"DESCRIPTION:{_ics_escape(f'Day {d['day']}: {d['title']}. {desc}')}"),
             ]
             if place.get("name"):
@@ -175,8 +181,9 @@ def pdf(plan: dict, option_tier: str | None = None) -> bytes:
     doc.ln()
     doc.set_font("Helvetica", "", 9)
     for o in shown:
+        picked = plan.get("places", {}).get((plan.get("hotels") or {}).get(o["tier"]) or "")
         row = (_fit(doc, f"{o['label']}: {o['title']}", cols[0] - 2), money(o["total"], cur),
-               money(o.get("per_person"), cur), _fit(doc, o["stay"]["name"], cols[3] - 2))
+               money(o.get("per_person"), cur), _fit(doc, picked["name"] if picked else stay_label(o, cur), cols[3] - 2))
         for value, cw in zip(row, cols):
             doc.cell(cw, 6.5, _latin1(value))
         doc.ln()
@@ -191,12 +198,10 @@ def pdf(plan: dict, option_tier: str | None = None) -> bytes:
         if gt:
             text(f"Getting there: {gt['mode'].title()} - {gt['detail']}" + (f" ({gt['duration']})" if gt.get("duration") else "")
                  + (f", {money(gt.get('cost'), cur)} return" if gt.get("cost") else ""), 9.5)
-        stay = o["stay"]
-        line = f"Stay: {stay['name']}"
-        if stay.get("nightly"):
-            line += f" ({money(stay['nightly'], cur)}/night)"
-        if stay.get("why"):
-            line += f" - {stay['why']}"
+        picked = plan.get("places", {}).get((plan.get("hotels") or {}).get(o["tier"]) or "")
+        line = f"Stay: {picked['name'] + ', ' + (picked.get('area') or '') if picked else stay_label(o, cur)}"
+        if o["stay"].get("why"):
+            line += f" - {o['stay']['why']}"
         text(line, 9.5)
         for hl in o.get("highlights", []):
             text(f"- {hl}", 9.5)
@@ -205,17 +210,8 @@ def pdf(plan: dict, option_tier: str | None = None) -> bytes:
     detailed = next((o for o in shown if o.get("details")), None)
     if detailed:
         det = detailed["details"]
-        heading(f"Your plan in detail: {detailed['label']}")
+        heading(f"Your plan: {detailed['label']}")
         text(det["overview"], 10)
-        for dd in det["days"]:
-            doc.ln(1)
-            spend = f"  (spend {money(dd.get('spend'), cur)})" if dd.get("spend") else ""
-            text(f"Day {dd['day']}: {dd['summary']}{spend}", 10, "B")
-            for m in dd.get("meals", []):
-                text(f"- {m['meal']}: {m['place']}" + (f" - try {m['try']}" if m.get("try") else "")
-                     + (f" ({money(m.get('cost'), cur)})" if m.get("cost") else ""), 9.5, "", MUTED, 4.8)
-            if dd.get("getting_around"):
-                text(f"- Getting around: {dd['getting_around']}", 9.5, "", MUTED, 4.8)
         if det.get("booking_checklist"):
             doc.ln(2)
             text("Booking checklist", 10.5, "B")
@@ -238,20 +234,25 @@ def pdf(plan: dict, option_tier: str | None = None) -> bytes:
             if extra:
                 text(extra, 9, "", MUTED, 4.6)
 
-    # Day by day
-    heading("Day by day")
-    for d in plan.get("days", []):
+    # Day by day: the timestamped schedule of the chosen (or matched) option
+    tier = option_tier or active_tier(plan)
+    heading(f"Day by day ({TIER_LABEL.get(tier, tier)} option)")
+    for d in (plan.get("schedules") or {}).get(tier, []):
         when = f"  ({d['date']})" if d.get("date") else ""
         doc.ln(1)
         text(f"Day {d['day']}{when} - {d['title']}", 11.5, "B", ACCENT, 6.5)
-        for it in d["items"]:
-            cost = f"  [{money(it['cost'], cur)}]" if it.get("cost") else ""
-            text(f"{it['time']}: {it['title']}{cost}", 10, "B", INK, 5.4)
-            if it.get("description"):
-                text(it["description"], 9.5, "", MUTED, 4.8)
-            place = it.get("place") or {}
+        for s in d["steps"]:
+            if s["kind"] == "travel":
+                how = "walk" if s.get("mode") == "walk" else s.get("mode", "")
+                text(f"{s['time']}   {s['title']}  ({s.get('distance_km')} km, {s.get('minutes')} min, {how})", 9, "", MUTED, 4.8)
+                continue
+            dur = f"  [{s['minutes']} min]" if s.get("minutes") and s["kind"] not in ("start", "end", "depart") else ""
+            text(f"{s['time']}   {s['title']}{dur}", 10, "B", INK, 5.4)
+            if s.get("detail"):
+                text(f"         {s['detail']}", 9, "", MUTED, 4.6)
+            place = s.get("place") or {}
             if place.get("hours"):
-                text(f"Hours: {place['hours']}", 8.5, "I", MUTED, 4.4)
+                text(f"         Hours: {place['hours']}", 8.5, "I", MUTED, 4.4)
 
     if plan.get("weather_note"):
         heading("Weather")

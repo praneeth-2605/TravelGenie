@@ -11,7 +11,7 @@ export function Sources({ sources, active }: { sources: Source[]; active: number
   }, [active])
 
   if (!sources.length) {
-    return <p className="rounded-2xl border border-line bg-surface p-6 text-muted">No knowledge-base sources were used for this plan. Stays and sights come from Wikivoyage.</p>
+    return <p className="rounded-2xl border border-line bg-surface p-6 text-muted">No guide sources were used for this plan. Stays and sights come from Wikivoyage.</p>
   }
   return (
     <ol className="space-y-3">

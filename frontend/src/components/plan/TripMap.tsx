@@ -51,14 +51,14 @@ function FocusOn({ marker, refs }: { marker: PlanMarker | undefined; refs: React
 
 export function TripMap({ plan, selected, focusId }: { plan: TripPlan; selected: Tier; focusId: string | null }) {
   const refs = useRef(new Map<string, L.Marker>())
-  const selectedStayId = plan.options.find(o => o.tier === selected)?.stay.place?.id
+  const selectedStayId = plan.hotels?.[selected] ?? null
   const markers = plan.markers.filter(m => m.lat != null && m.lon != null)
   const points = useMemo(() => markers.map(m => [m.lat!, m.lon!] as [number, number]), [markers])
   const center: [number, number] = plan.map_center ? [plan.map_center.lat, plan.map_center.lon] : points[0] ?? [20, 0]
 
   // Number sights in visiting order across the trip.
   const order = new Map<string, number>()
-  plan.days.forEach(d => d.items.forEach(it => { if (it.place?.id && !order.has(it.place.id)) order.set(it.place.id, order.size + 1) }))
+  plan.days.forEach(d => d.stops.forEach(s => { if (s.place_id && s.kind !== 'meal' && !order.has(s.place_id)) order.set(s.place_id, order.size + 1) }))
 
   if (!markers.length && !plan.map_center) {
     return <div className="grid h-full place-items-center rounded-2xl border border-line bg-surface p-8 text-center text-muted">No mapped places for this trip yet.</div>
@@ -85,11 +85,15 @@ export function TripMap({ plan, selected, focusId }: { plan: TripPlan; selected:
               ref={el => { if (el) refs.current.set(m.id, el); else refs.current.delete(m.id) }}
             >
               <Popup>
-                <div style={{ minWidth: 180, fontFamily: 'DM Sans, sans-serif' }}>
+                <div style={{ minWidth: 180, maxWidth: 220, fontFamily: 'DM Sans, sans-serif' }}>
+                  {m.photo && (
+                    <img src={m.photo.thumb} alt="" loading="lazy" referrerPolicy="no-referrer"
+                      style={{ width: '100%', height: 110, objectFit: 'cover', borderRadius: 8, marginBottom: 6 }} />
+                  )}
                   <strong>{m.name}</strong>
                   <div style={{ fontSize: 12, color: '#6f675c', marginTop: 2 }}>
                     {isStay
-                      ? `Stay · ${(m.tiers ?? []).map(t => TIER_META[t]?.label).join(', ')}`
+                      ? `${highlight ? 'Your stay' : 'Stay option'} · ${(m.tiers ?? []).map(t => TIER_META[t]?.label).join(', ')}`
                       : `Day ${m.days?.join(', ')}${m.area ? ` · ${m.area}` : ''}`}
                   </div>
                   {m.price && <div style={{ fontSize: 12, marginTop: 4 }}>{m.price}</div>}

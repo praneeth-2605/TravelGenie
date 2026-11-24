@@ -1,10 +1,10 @@
-import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import {
   BedDouble, CalendarDays, CloudSun, Globe, LayoutDashboard, LayoutGrid, Loader2, Map as MapIcon, MessageSquare, Sparkles, Star, TrainFront,
 } from 'lucide-react'
 import {
-  ApiError, api, streamChat, uid, TIER_META, type AgentEvent, type ChatMessage, type Source, type Tier, type TripPlan,
+  ApiError, api, isLegacyPlan, streamChat, uid, TIER_META, type AgentEvent, type ChatMessage, type Source, type Tier, type TripPlan,
 } from '../lib/api'
 import { useTrips } from '../components/AppShell'
 import { META, StatusIcon, latest } from '../components/AgentTrace'
@@ -211,6 +211,47 @@ export function TripWorkspace() {
     }
   }
 
+  const chooseHotel = async (tier: Tier, placeId: string | null) => {
+    const res = await api.chooseHotel(tripId, tier, placeId)
+    setPlan(res.plan)
+    refresh()
+  }
+
+  // Chat panel width (desktop): drag the divider; double-click resets. Remembered on this device.
+  const [chatWidth, setChatWidth] = useState(() => {
+    try { return Number(localStorage.getItem('tg.chatWidth')) || 400 } catch { return 400 }
+  })
+  const dragging = useRef(false)
+  const clampWidth = (w: number) => Math.round(Math.min(Math.max(w, 300), Math.max(window.innerWidth * 0.7, 320)))
+  const saveWidth = (w: number) => { try { localStorage.setItem('tg.chatWidth', String(w)) } catch { /* private mode */ } }
+  const startDrag = (e: PointerEvent<HTMLDivElement>) => {
+    const left = (e.currentTarget.parentElement?.getBoundingClientRect().left ?? 0)
+    dragging.current = true
+    e.currentTarget.setPointerCapture(e.pointerId)
+    const move = (ev: globalThis.PointerEvent) => { if (dragging.current) setChatWidth(clampWidth(ev.clientX - left)) }
+    const up = (ev: globalThis.PointerEvent) => {
+      dragging.current = false
+      const w = clampWidth(ev.clientX - left)
+      setChatWidth(w)
+      saveWidth(w)
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+  const nudge = (e: KeyboardEvent) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+    e.preventDefault()
+    const w = clampWidth(chatWidth + (e.key === 'ArrowRight' ? 40 : -40))
+    setChatWidth(w)
+    saveWidth(w)
+  }
+
   const cite = (n: number) => { setActiveSource(n); setTab('web'); setMobilePane('plan') }
   const showOnMap = (id: string) => { setFocusId(id); setTab('map') }
   const liveSteps = [...messages].reverse().find(m => m.role === 'assistant' && m.streaming)?.steps ?? []
@@ -237,8 +278,8 @@ export function TripWorkspace() {
 
       <div className="flex min-h-0 flex-1">
         {/* Chat */}
-        <section className={`${mobilePane === 'chat' ? 'flex' : 'hidden'} w-full flex-col border-r border-line lg:flex lg:w-[380px] lg:shrink-0 xl:w-[420px]`}
-          aria-label="Conversation">
+        <section className={`${mobilePane === 'chat' ? 'flex' : 'hidden'} w-full flex-col lg:flex lg:w-[var(--chat-w)] lg:shrink-0`}
+          style={{ '--chat-w': `${chatWidth}px` } as CSSProperties} aria-label="Conversation">
           <div ref={scroller} className="flex-1 space-y-6 overflow-y-auto px-4 py-5">
             {messages.length === 0 && (
               <p className="pt-10 text-center text-sm text-muted">Describe your trip to get started.</p>
@@ -263,9 +304,31 @@ export function TripWorkspace() {
           </div>
         </section>
 
+        <div role="separator" aria-orientation="vertical" aria-label="Resize chat panel" aria-valuenow={chatWidth}
+          aria-valuemin={300} tabIndex={0} title="Drag to resize · double-click to reset"
+          onPointerDown={startDrag} onKeyDown={nudge} onDoubleClick={() => { setChatWidth(400); saveWidth(400) }}
+          className="group relative hidden w-px shrink-0 cursor-col-resize bg-line outline-none lg:block">
+          <span className="absolute inset-y-0 -right-1.5 -left-1.5 z-10" />
+          <span className="absolute top-1/2 left-1/2 z-10 h-10 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-line transition group-hover:bg-accent group-focus-visible:bg-accent" />
+        </div>
+
         {/* Plan */}
         <section className={`${mobilePane === 'plan' ? 'flex' : 'hidden'} min-w-0 flex-1 flex-col lg:flex`} aria-label="Trip plan">
-          {plan ? (
+          {plan && isLegacyPlan(plan) ? (
+            <div className="grid flex-1 place-items-center p-8 text-center">
+              <div className="max-w-md">
+                <Sparkles className="mx-auto size-8 text-accent" />
+                <h2 className="mt-3 font-serif text-xl font-semibold">This plan was made with an older TravelGenie</h2>
+                <p className="mt-2 text-muted">
+                  New plans have a timed hour-by-hour itinerary with real travel distances, photos, and hotels you choose yourself.
+                </p>
+                <button type="button" disabled={busy} onClick={() => { setMobilePane('chat'); send('Please re-plan this trip from scratch with the same details.') }}
+                  className="mt-4 inline-flex items-center gap-2 rounded-xl bg-accent px-4 py-2 text-sm font-medium text-accent-ink disabled:opacity-60">
+                  {busy ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />} Re-plan this trip
+                </button>
+              </div>
+            </div>
+          ) : plan ? (
             <>
               <nav className="flex shrink-0 gap-1 overflow-x-auto border-b border-line px-3 pt-2" role="tablist">
                 {TABS.filter(t => t.id !== 'yourplan' || selected).map(t => (
@@ -283,11 +346,11 @@ export function TripWorkspace() {
                 {tab === 'yourplan' && selected && (
                   <YourPlan plan={plan} tier={selected} choosing={choosing === selected}
                     onRebuild={() => choose(selected)} onAsk={q => { setMobilePane('chat'); send(q) }}
-                    onSwitch={() => setTab('options')} />
+                    onSwitch={() => setTab('options')} onOpenStays={() => setTab('stays')} onOpenItinerary={() => setTab('itinerary')} />
                 )}
                 {tab === 'overview' && <Overview plan={plan} onOpen={setTab} onChoose={choose} choosing={choosing} selected={selected} />}
                 {tab === 'options' && <Options plan={plan} selected={selected} choosing={choosing} onChoose={choose} />}
-                {tab === 'itinerary' && <Timeline plan={plan} onCite={cite} onShowOnMap={showOnMap} />}
+                {tab === 'itinerary' && <Timeline plan={plan} onCite={cite} onShowOnMap={showOnMap} onOpenStays={() => setTab('stays')} />}
                 {tab === 'transport' && <GettingThere plan={plan} />}
                 {tab === 'weather' && <WeatherPanel plan={plan} />}
                 {tab === 'web' && <WebPanel plan={plan} sources={plan.sources.length ? plan.sources : sources} active={activeSource} />}
@@ -296,7 +359,7 @@ export function TripWorkspace() {
                     <TripMap plan={plan} selected={selected ?? 'yours'} focusId={focusId} />
                   </Suspense>
                 )}
-                {tab === 'stays' && <Stays plan={plan} selected={selected ?? 'yours'} />}
+                {tab === 'stays' && <Stays plan={plan} selected={selected ?? 'yours'} onChoose={chooseHotel} />}
               </div>
             </>
           ) : planning ? (

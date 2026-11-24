@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { Database, Download, LayoutDashboard, LogOut, Menu, Plus, Settings as SettingsIcon, Star, WifiOff, X } from 'lucide-react'
+import { Download, LayoutDashboard, LogOut, Menu, Plus, Settings as SettingsIcon, Star, WifiOff, X } from 'lucide-react'
 import { api, type TripSummary } from '../lib/api'
 import { useAuth } from '../lib/auth'
 
@@ -97,7 +97,6 @@ export function AppShell() {
         </button>
         <div className="space-y-0.5">
           <NavItem to="/" icon={LayoutDashboard} end>Dashboard</NavItem>
-          <NavItem to="/knowledge" icon={Database}>Knowledge base</NavItem>
           <NavItem to="/settings" icon={SettingsIcon}>Settings</NavItem>
           {canInstall && (
             <button type="button" onClick={install}

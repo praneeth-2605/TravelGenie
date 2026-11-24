@@ -3,7 +3,6 @@ import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { Loader2 } from 'lucide-react'
 import { AuthProvider, useApplyTheme, useAuth } from './lib/auth'
 import { AppShell } from './components/AppShell'
-import { KnowledgeBase } from './components/KnowledgeBase'
 import { AuthPage } from './pages/AuthPage'
 import { Dashboard } from './pages/Dashboard'
 import { NewTrip } from './pages/NewTrip'
@@ -45,7 +44,6 @@ function Routed() {
         <Route index element={<Dashboard />} />
         <Route path="new" element={<NewTrip />} />
         <Route path="trips/:tripId" element={<TripWorkspace />} />
-        <Route path="knowledge" element={<KnowledgeBase />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
