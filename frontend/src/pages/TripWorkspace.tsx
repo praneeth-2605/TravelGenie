@@ -16,6 +16,7 @@ import { Timeline } from '../components/plan/Timeline'
 const TripMap = lazy(() => import('../components/plan/TripMap').then(m => ({ default: m.TripMap })))
 import { Stays } from '../components/plan/Stays'
 import { ExportMenu } from '../components/plan/ExportMenu'
+import { ShareMenu } from '../components/plan/ShareMenu'
 import { Overview, type SectionTab } from '../components/plan/Overview'
 import { GettingThere } from '../components/plan/GettingThere'
 import { WeatherPanel } from '../components/plan/WeatherPanel'
@@ -75,6 +76,10 @@ export function TripWorkspace() {
 
   const [loading, setLoading] = useState(true)
   const [title, setTitle] = useState('New trip')
+  const [shareToken, setShareToken] = useState<string | null>(null)
+  const [usage, setUsage] = useState<{ remaining: number | null; limit: number } | null>(null)
+  const refreshUsage = useCallback(() => { api.usage().then(setUsage).catch(() => {}) }, [])
+  useEffect(() => { refreshUsage() }, [refreshUsage])
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [plan, setPlan] = useState<TripPlan | null>(null)
   const [sources, setSources] = useState<Source[]>([])
@@ -142,9 +147,10 @@ export function TripWorkspace() {
     } finally {
       updateMsg(assistantId, m => (m.streaming ? { ...m, streaming: false } : m))
       setBusy(false)
+      refreshUsage()
       abortRef.current = null
     }
-  }, [tripId, plan, updateMsg, refresh])
+  }, [tripId, plan, updateMsg, refresh, refreshUsage])
 
   // Load the trip (or start a new one with the message from the form).
   useEffect(() => {
@@ -156,6 +162,7 @@ export function TripWorkspace() {
     api.trip(tripId).then(t => {
       if (cancelled) return
       setTitle(t.title)
+      setShareToken(t.share_token ?? null)
       setPlan(t.plan)
       setTab(t.plan?.selected_tier ? 'yourplan' : 'overview')
       setSources(t.sources)
@@ -200,6 +207,7 @@ export function TripWorkspace() {
       setChooseError((err as Error).message)
     } finally {
       setChoosing(null)
+      refreshUsage()
     }
   }
 
@@ -223,6 +231,7 @@ export function TripWorkspace() {
             </button>
           ))}
         </div>
+        {plan && <ShareMenu tripId={tripId} title={title} initialToken={shareToken} />}
         {plan && <ExportMenu tripId={tripId} selected={selected ?? 'yours'} />}
       </header>
 
@@ -242,6 +251,11 @@ export function TripWorkspace() {
             {selected && (
               <div className="mb-2 flex items-center gap-1.5 text-xs text-muted">
                 <Star className="size-3.5 fill-accent text-accent" /> Chatting about your <strong className="text-ink">{TIER_META[selected].planName}</strong>
+              </div>
+            )}
+            {usage?.remaining != null && (
+              <div className={`mb-1.5 text-right text-[11px] ${usage.remaining <= 5 ? 'text-warn' : 'text-faint'}`}>
+                {usage.remaining} of {usage.limit} AI requests left today
               </div>
             )}
             <Composer busy={busy} onSend={send} onStop={() => abortRef.current?.abort()}

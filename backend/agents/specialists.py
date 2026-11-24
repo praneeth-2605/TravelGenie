@@ -17,6 +17,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langgraph.config import get_stream_writer
 from pydantic import BaseModel, Field, model_validator
 
+from backend import db
 from backend.agents.state import GraphState
 from backend.agents.tools import mock_book_item, weather_forecast
 from backend.config import settings
@@ -276,6 +277,13 @@ async def transport_agent(state: GraphState) -> dict:
     get_in = (guide.get("sections") or {}).get("Get in") or {}
     notes = "\n".join(f"- {k.lstrip('_')}: {v}" for k, v in get_in.items())[:3200] or "(no guide notes)"
     month = (trip.get("start_date") or "")[:7] or "the travel dates"
+    currency = (trip.get("currency") or "USD").upper()
+    cache_key = f"transport:{origin.lower().strip()}|{dest.lower().strip()}|{month}|{currency}"
+    cached = await asyncio.to_thread(db.cache_get, cache_key, 7 * 86400)
+    if cached:
+        emit("transport", "done", f"{', '.join(m['mode'] for m in cached['modes'] if m['available'])} compared"
+                                  + (f" · ~{cached['distance_km']} km" if cached.get("distance_km") else "") + " (cached)")
+        return {"transport": cached}
     prompt = TRANSPORT_PROMPT.format(
         origin=origin, destination=dest, currency=(trip.get("currency") or "USD").upper(), month=month,
         distance=f"about {distance} km in a straight line" if distance else "distance unknown", guide=notes)
@@ -289,6 +297,7 @@ async def transport_agent(state: GraphState) -> dict:
     data.update({"origin": origin, "destination": dest, "distance_km": distance,
                  "currency": (trip.get("currency") or "USD").upper(), "guide_url": guide.get("url")})
     available = [m["mode"] for m in data["modes"] if m["available"]]
+    await asyncio.to_thread(db.cache_set, cache_key, data)
     emit("transport", "done", f"{', '.join(available)} compared" + (f" · ~{distance} km" if distance else ""))
     return {"transport": data}
 

@@ -12,6 +12,14 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | null>(null)
 
+/** Remove this user's trips cached for offline use (shared devices, logout). */
+function clearOfflineData() {
+  try {
+    navigator.serviceWorker?.controller?.postMessage('clear-user-data')
+    if ('caches' in window) caches.delete('tg-data')
+  } catch { /* not supported */ }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [settings, setSettings] = useState<Settings | null>(null)
@@ -28,7 +36,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [setSession])
 
   const logout = useCallback(async () => {
-    try { await api.logout() } finally { setSession(null) }
+    try { await api.logout() } finally {
+      setSession(null)
+      clearOfflineData()
+    }
   }, [setSession])
 
   const value = useMemo(() => ({ user, settings, loading, setSession, setSettings, logout }),

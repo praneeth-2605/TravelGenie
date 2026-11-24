@@ -62,6 +62,18 @@ CREATE TABLE IF NOT EXISTS trips (
     updated_at    BIGINT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS trips_by_user ON trips(user_id, updated_at DESC);
+CREATE TABLE IF NOT EXISTS usage (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    day     TEXT NOT NULL,
+    kind    TEXT NOT NULL,
+    count   INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, day, kind)
+);
+CREATE TABLE IF NOT EXISTS kv_cache (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    created_at BIGINT NOT NULL
+);
 """
 
 
@@ -152,6 +164,18 @@ CREATE TABLE IF NOT EXISTS trips (
     updated_at  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS trips_by_user ON trips(user_id, updated_at DESC);
+CREATE TABLE IF NOT EXISTS usage (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    day     TEXT NOT NULL,
+    kind    TEXT NOT NULL,
+    count   INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, day, kind)
+);
+CREATE TABLE IF NOT EXISTS kv_cache (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
 """
 
 
@@ -186,23 +210,33 @@ def tx():
 
 
 MIGRATIONS = [
-    # (table, column, definition) — added to existing databases on startup
-    ("user_settings", "home_city", "TEXT NOT NULL DEFAULT ''"),
-    ("trips", "selected_tier", "TEXT"),
+    # (table, column, SQLite definition, PostgreSQL definition) — added to existing
+    # databases on startup, so a deployed database upgrades itself.
+    ("user_settings", "home_city", "TEXT NOT NULL DEFAULT ''", "TEXT NOT NULL DEFAULT ''"),
+    ("trips", "selected_tier", "TEXT", "TEXT"),
+    ("trips", "share_token", "TEXT", "TEXT"),          # public share link
+    ("users", "consent_at", "INTEGER", "BIGINT"),      # when terms/privacy were accepted
 ]
+INDEXES = ["CREATE UNIQUE INDEX IF NOT EXISTS trips_share ON trips(share_token)"]
 
 
 def init() -> None:
     if USE_PG:
         with _pool().connection() as conn:
             conn.execute(PG_SCHEMA)
+            for table, column, _, pg_def in MIGRATIONS:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {pg_def}")
+            for sql in INDEXES:
+                conn.execute(sql)
         return
     with tx() as c:
         c.executescript(SCHEMA)
-        for table, column, definition in MIGRATIONS:
+        for table, column, sqlite_def, _ in MIGRATIONS:
             cols = {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}
             if column not in cols:
-                c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+                c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {sqlite_def}")
+        for sql in INDEXES:
+            c.execute(sql)
 
 
 def new_id() -> str:
@@ -228,12 +262,13 @@ def user_by_google(sub: str) -> sqlite3.Row | None:
 
 def create_user(email: str, name: str, password_hash: str | None = None,
                 google_sub: str | None = None, avatar_url: str | None = None) -> sqlite3.Row:
+    """New account. Callers only create accounts after the user accepted the terms."""
     uid = new_id()
     with tx() as c:
         c.execute(
-            "INSERT INTO users (id, email, name, password_hash, google_sub, avatar_url, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (uid, email, name, password_hash, google_sub, avatar_url, now()),
+            "INSERT INTO users (id, email, name, password_hash, google_sub, avatar_url, created_at, consent_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (uid, email, name, password_hash, google_sub, avatar_url, now(), now()),
         )
         c.execute("INSERT INTO user_settings (user_id) VALUES (?)", (uid,))
     return user_by_id(uid)
@@ -257,6 +292,7 @@ def public_user(row: sqlite3.Row) -> dict:
         "id": row["id"], "email": row["email"], "name": row["name"],
         "avatar_url": row["avatar_url"], "has_password": bool(row["password_hash"]),
         "google_linked": bool(row["google_sub"]), "created_at": row["created_at"],
+        "consent_at": row["consent_at"],
     }
 
 
@@ -340,3 +376,48 @@ def delete_trip(user_id: str, trip_id: str) -> bool:
     with tx() as c:
         cur = c.execute("DELETE FROM trips WHERE id = ? AND user_id = ?", (trip_id, user_id))
     return cur.rowcount > 0
+
+
+# ------------------------------------------------------------------ sharing
+def set_share_token(user_id: str, trip_id: str, token: str | None) -> None:
+    with tx() as c:
+        c.execute("UPDATE trips SET share_token = ? WHERE id = ? AND user_id = ?", (token, trip_id, user_id))
+
+
+def trip_by_share_token(token: str) -> dict | None:
+    row = connect().execute("SELECT * FROM trips WHERE share_token = ?", (token,)).fetchone()
+    return _trip(row, full=True) if row else None
+
+
+# ------------------------------------------------------------------ usage limits
+def usage_add(user_id: str, day: str, kind: str, amount: int = 1) -> int:
+    """Increment today's counter and return the new value."""
+    with tx() as c:
+        c.execute("INSERT INTO usage (user_id, day, kind, count) VALUES (?, ?, ?, ?) "
+                  "ON CONFLICT (user_id, day, kind) DO UPDATE SET count = usage.count + excluded.count",
+                  (user_id, day, kind, amount))
+        row = c.execute("SELECT count FROM usage WHERE user_id = ? AND day = ? AND kind = ?",
+                        (user_id, day, kind)).fetchone()
+    return row["count"]
+
+
+def usage_get(user_id: str, day: str, kind: str) -> int:
+    row = connect().execute("SELECT count FROM usage WHERE user_id = ? AND day = ? AND kind = ?",
+                            (user_id, day, kind)).fetchone()
+    return row["count"] if row else 0
+
+
+# ------------------------------------------------------------------ shared cache
+def cache_get(key: str, ttl_seconds: int):
+    """A JSON value cached in the database (shared by every server instance)."""
+    row = connect().execute("SELECT value, created_at FROM kv_cache WHERE key = ?", (key,)).fetchone()
+    if not row or now() - row["created_at"] > ttl_seconds:
+        return None
+    return json.loads(row["value"])
+
+
+def cache_set(key: str, value) -> None:
+    with tx() as c:
+        c.execute("INSERT INTO kv_cache (key, value, created_at) VALUES (?, ?, ?) "
+                  "ON CONFLICT (key) DO UPDATE SET value = excluded.value, created_at = excluded.created_at",
+                  (key, json.dumps(value, ensure_ascii=False), now()))

@@ -200,9 +200,25 @@ def _place_public(p: dict) -> dict:
     return {k: p.get(k) for k in keys if p.get(k) not in (None, "")}
 
 
+def indian_number(value: float) -> str:
+    """Indian digit grouping: 150000 → 1,50,000 and 12500000 → 1,25,00,000."""
+    n = int(round(abs(value)))
+    s = str(n)
+    head, tail = s[:-3], s[-3:]
+    groups = []
+    while len(head) > 2:
+        groups.insert(0, head[-2:])
+        head = head[:-2]
+    if head:
+        groups.insert(0, head)
+    return ("-" if value < 0 else "") + ",".join([*groups, tail])
+
+
 def money(value, currency: str) -> str:
     if value is None:
         return "—"
+    if (currency or "").upper() == "INR":
+        return f"₹{indian_number(value)}"
     return f"{currency} {value:,.0f}"
 
 

@@ -17,6 +17,11 @@ After every request you get separate sections: **Overview, Getting there (flight
 ## ✨ Features
 
 - 👤 **Accounts**: email + password sign-up, "Continue with Google", secure httpOnly sessions, log out everywhere, account deletion
+- 📱 **Installable app**: add TravelGenie to your phone's home screen; saved trips open offline
+- 🔗 **Share trips**: public read-only links and one-tap WhatsApp sharing (chats and private documents are never shared)
+- 🎫 **Booking links**: Google Flights, IRCTC, redBus, Booking.com and Google Maps, pre-filled from the plan
+- ₹ **Made for India**: Indian number formats (₹1,50,000) and per-person or total budgets
+- ⚖️ **Fair use and compliance**: daily AI request limits, Privacy Policy and Terms (DPDP Act 2023), consent at sign-up, one-click data download
 - 🔒 **Privacy**: uploaded documents are private to their owner (never used in other users' answers), and deleting a trip or an account also deletes its chat history and uploads
 - ⚙️ **User settings**: home city, home currency, usual travellers, typical budget range, travel style, pace, interests, dietary needs, light/dark theme. These are used as defaults for every plan.
 - 📊 **Dashboard**: your trips with prices for all three options, stats, upcoming-trip countdown, favourites
@@ -158,6 +163,8 @@ Get a free API key at [jina.ai](https://jina.ai) (it starts with `jina_`).
 | `OPENWEATHERMAP_API_KEY` | optional, live forecasts |
 | `TAVILY_API_KEY` | optional, web search |
 | `GOOGLE_CLIENT_ID` | optional, Google sign-in (add your Vercel URL to the OAuth client's JavaScript origins) |
+| `CONTACT_EMAIL` | recommended, shown in the Privacy Policy for privacy requests and grievances |
+| `DAILY_AI_LIMIT` | optional, AI requests per user per day (default 40) |
 
 4. Click **Deploy**. Every later `git push` to `main` redeploys automatically.
 

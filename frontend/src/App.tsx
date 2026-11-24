@@ -8,6 +8,8 @@ import { AuthPage } from './pages/AuthPage'
 import { Dashboard } from './pages/Dashboard'
 import { NewTrip } from './pages/NewTrip'
 import { SettingsPage } from './pages/SettingsPage'
+import { SharedTrip } from './pages/SharedTrip'
+import { PrivacyPolicy, TermsOfUse } from './pages/Legal'
 import { TripWorkspace } from './pages/TripWorkspace'
 
 function Splash() {
@@ -36,6 +38,9 @@ function Routed() {
     <Routes>
       <Route path="/login" element={<PublicOnly><AuthPage mode="login" /></PublicOnly>} />
       <Route path="/signup" element={<PublicOnly><AuthPage mode="signup" /></PublicOnly>} />
+      <Route path="/share/:token" element={<SharedTrip />} />
+      <Route path="/privacy" element={<PrivacyPolicy />} />
+      <Route path="/terms" element={<TermsOfUse />} />
       <Route element={<RequireAuth><AppShell /></RequireAuth>}>
         <Route index element={<Dashboard />} />
         <Route path="new" element={<NewTrip />} />

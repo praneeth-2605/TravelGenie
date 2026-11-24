@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowRight, Calendar, CalendarDays, MapPin, Minus, Navigation, Plus, Users, Wallet } from 'lucide-react'
-import { TIER_META, uid } from '../lib/api'
+import { money, TIER_META, uid } from '../lib/api'
 import { useAuth } from '../lib/auth'
 
 const INTEREST_OPTIONS = ['Beaches', 'Food', 'Temples', 'Museums', 'Nightlife', 'Nature', 'Hiking', 'Shopping', 'History', 'Art', 'Adventure', 'Relaxation']
@@ -9,14 +9,20 @@ const CURRENCIES = ['INR', 'USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'SGD', 'AED
 
 export function buildPrompt(f: {
   destination: string; origin: string; start: string; days: number; travelers: number; currency: string
-  min: string; max: string; interests: string[]; notes: string
+  min: string; max: string; perPerson?: boolean; interests: string[]; notes: string
 }) {
   const parts = [`Plan ${f.days} days in ${f.destination.trim()}`]
   if (f.origin.trim()) parts.push(`travelling from ${f.origin.trim()}`)
   if (f.start) parts.push(`starting ${f.start}`)
   parts.push(`for ${f.travelers} ${f.travelers === 1 ? 'person' : 'people'}`)
-  if (f.min && f.max) parts.push(`with a total budget of ${f.min} to ${f.max} ${f.currency}`)
-  else if (f.max) parts.push(`with a total budget of up to ${f.max} ${f.currency}`)
+  // The agents work with the TOTAL for everyone; a per-person budget is multiplied out.
+  const mult = f.perPerson ? Math.max(f.travelers, 1) : 1
+  const lo = f.min ? Number(f.min) * mult : 0
+  const hi = f.max ? Number(f.max) * mult : 0
+  const pp = f.perPerson && f.travelers > 1
+    ? ` (${f.min ? `${f.min} to ` : 'up to '}${f.max || f.min} ${f.currency} per person)` : ''
+  if (lo && hi) parts.push(`with a total budget of ${lo} to ${hi} ${f.currency}${pp}`)
+  else if (hi) parts.push(`with a total budget of up to ${hi} ${f.currency}${pp}`)
   else parts.push(`(prices in ${f.currency})`)
   let text = parts.join(' ') + '.'
   if (f.interests.length) text += ` We love ${f.interests.join(', ').toLowerCase()}.`
@@ -35,6 +41,7 @@ export function NewTrip() {
   const [currency, setCurrency] = useState(settings?.home_currency ?? 'INR')
   const [min, setMin] = useState(settings?.budget_min ? String(settings.budget_min) : '')
   const [max, setMax] = useState(settings?.budget_max ? String(settings.budget_max) : '')
+  const [perPerson, setPerPerson] = useState(false)
   const [interests, setInterests] = useState<string[]>(
     (settings?.interests ?? []).map(i => i[0].toUpperCase() + i.slice(1)))
   const [notes, setNotes] = useState('')
@@ -47,7 +54,7 @@ export function NewTrip() {
     e.preventDefault()
     if (!destination.trim()) return setError('Where are you going?')
     if (min && max && Number(min) > Number(max)) return setError('The minimum budget is above the maximum.')
-    go(buildPrompt({ destination, origin, start, days, travelers, currency, min, max, interests, notes }))
+    go(buildPrompt({ destination, origin, start, days, travelers, currency, min, max, perPerson, interests, notes }))
   }
 
   const toggle = (i: string) => setInterests(s => (s.includes(i) ? s.filter(x => x !== i) : [...s, i]))
@@ -102,7 +109,15 @@ export function NewTrip() {
           </div>
 
           <div>
-            <span className="flex items-center gap-2 text-sm font-medium"><Wallet className="size-4 text-accent" /> Your budget range (total for everyone)</span>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="flex items-center gap-2 text-sm font-medium"><Wallet className="size-4 text-accent" /> Your budget range</span>
+              <div role="radiogroup" aria-label="Budget is" className="inline-flex rounded-lg border border-line p-0.5 text-xs">
+                {([[false, 'Total for everyone'], [true, 'Per person']] as const).map(([value, label]) => (
+                  <button key={label} type="button" role="radio" aria-checked={perPerson === value} onClick={() => setPerPerson(value)}
+                    className={`rounded-md px-2.5 py-1 ${perPerson === value ? 'bg-surface-2 font-medium text-ink' : 'text-muted'}`}>{label}</button>
+                ))}
+              </div>
+            </div>
             <div className="mt-2 grid grid-cols-[110px_1fr_1fr] gap-2">
               <select aria-label="Currency" className={field} value={currency} onChange={e => setCurrency(e.target.value)}>
                 {CURRENCIES.map(c => <option key={c}>{c}</option>)}
@@ -110,7 +125,12 @@ export function NewTrip() {
               <input inputMode="numeric" aria-label="Minimum budget" className={field} placeholder="Min" value={min} onChange={e => setMin(e.target.value.replace(/[^\d]/g, ''))} />
               <input inputMode="numeric" aria-label="Maximum budget" className={field} placeholder="Max" value={max} onChange={e => setMax(e.target.value.replace(/[^\d]/g, ''))} />
             </div>
-            <p className="mt-1.5 text-xs text-faint">Used for the 🎯 Your budget option. Leave empty and we'll suggest a balanced plan.</p>
+            <p className="mt-1.5 text-xs text-faint">
+              {perPerson && travelers > 1 && max
+                ? <>Total for {travelers} people: <strong className="text-ink">{min ? `${money(Number(min) * travelers, currency)} – ` : 'up to '}{money(Number(max) * travelers, currency)}</strong>. </>
+                : null}
+              Used for the 🎯 Your budget option. Leave empty and we'll suggest a balanced plan.
+            </p>
           </div>
 
           <div>

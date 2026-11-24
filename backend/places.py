@@ -38,8 +38,15 @@ _key_locks: dict[str, threading.Lock] = {}
 _key_locks_guard = threading.Lock()
 
 
+# Final results go to the database cache, shared by every server instance (on Vercel
+# each instance has its own short-lived disk). Raw Wikivoyage pages stay on disk.
+_DB_CACHED = ("places:", "guide:", "geo:")
+
+
 def _cached(key: str, fn):
-    """Disk cache; concurrent callers for the same key share one fetch."""
+    """Cached fetch; concurrent callers for the same key share one fetch."""
+    if key.startswith(_DB_CACHED):
+        return _db_cached(key, fn)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     path = CACHE_DIR / (hashlib.sha1(key.encode()).hexdigest() + ".json")
 
@@ -56,6 +63,27 @@ def _cached(key: str, fn):
         value = fn()
         if value:
             path.write_text(json.dumps(value, ensure_ascii=False))
+        return value
+
+
+def _db_cached(key: str, fn):
+    from backend import db
+
+    try:
+        hit = db.cache_get(key, CACHE_TTL)
+    except Exception:  # cache table not ready: just fetch
+        return fn()
+    if hit is not None:
+        return hit
+    with _key_locks_guard:
+        lock = _key_locks.setdefault(key, threading.Lock())
+    with lock:
+        hit = db.cache_get(key, CACHE_TTL)
+        if hit is not None:
+            return hit
+        value = fn()
+        if value:
+            db.cache_set(key, value)
         return value
 
 

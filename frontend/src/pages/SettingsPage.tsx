@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Check, Loader2, Monitor, Moon, Sun, X } from 'lucide-react'
+import { Link, useNavigate } from 'react-router-dom'
+import { Check, Download, Loader2, Monitor, Moon, Sun, X } from 'lucide-react'
 import { api, type Settings } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { Avatar } from '../components/AppShell'
@@ -227,7 +227,20 @@ export function SettingsPage() {
         </Card>
 
         {/* Danger */}
-        <Card danger title="Delete account" desc="Permanently deletes your account, settings and all trips. This can't be undone.">
+        {/* Your data (DPDP: right to access) */}
+        <Card title="Your data" desc="Download everything TravelGenie stores about you: account, preferences, trips, conversations and uploaded documents.">
+          <div className="flex flex-wrap items-center gap-3">
+            <a href={api.accountExportUrl} download className="inline-flex items-center gap-2 rounded-xl border border-line px-4 py-2 text-sm font-medium hover:border-accent/50">
+              <Download className="size-4" /> Download my data (JSON)
+            </a>
+            <span className="text-xs text-muted">
+              Read the <Link to="/privacy" className="text-accent hover:underline">Privacy Policy</Link> and{' '}
+              <Link to="/terms" className="text-accent hover:underline">Terms of Use</Link>.
+            </span>
+          </div>
+        </Card>
+
+        <Card danger title="Delete account" desc="Permanently deletes your account, settings, all trips and their conversations, and your uploaded documents. This can't be undone.">
           <div className="flex flex-col gap-2 sm:flex-row">
             <input className={field} placeholder='Type DELETE to confirm' value={confirmText} onChange={e => setConfirmText(e.target.value)} aria-label="Type DELETE to confirm" />
             <button type="button" disabled={confirmText !== 'DELETE' || deleting}

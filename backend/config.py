@@ -57,6 +57,12 @@ class Settings:
     jina_rerank_model: str = os.getenv("JINA_RERANK_MODEL", "jina-reranker-v2-base-multilingual")
     jina_dimensions: int = int(os.getenv("JINA_DIMENSIONS", "512"))
 
+    # Fair use: AI requests (planning, chat, plan details, search inspector) per user per day.
+    daily_ai_limit: int = int(os.getenv("DAILY_AI_LIMIT", "40"))
+
+    # Shown in the Privacy Policy as the contact for privacy questions and grievances.
+    contact_email: str | None = _key("CONTACT_EMAIL")
+
     # Auth
     secret_key: str | None = _key("SECRET_KEY")
     google_client_id: str | None = _key("GOOGLE_CLIENT_ID")

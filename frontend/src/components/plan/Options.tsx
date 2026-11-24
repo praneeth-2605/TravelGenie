@@ -40,7 +40,7 @@ interface CardProps {
   selected: boolean
   choosing: boolean
   disabled: boolean
-  onChoose: () => void
+  onChoose?: () => void
 }
 
 function OptionCard({ o, plan, selected, choosing, disabled, onChoose }: CardProps) {
@@ -119,20 +119,20 @@ function OptionCard({ o, plan, selected, choosing, disabled, onChoose }: CardPro
         </ul>
       )}
       {o.note && <p className="mt-3 text-xs text-muted italic">{o.note}</p>}
-      <div className="mt-auto pt-5">
+      {onChoose && <div className="mt-auto pt-5">
         <button type="button" onClick={onChoose} disabled={disabled}
           className={`flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition disabled:opacity-60 ${selected ? 'bg-accent text-accent-ink' : 'border border-accent/60 text-accent hover:bg-accent hover:text-accent-ink'}`}>
           {choosing && <Loader2 className="size-4 animate-spin" />}
           {choosing ? 'Building your detailed plan…' : selected ? 'Open my plan' : `Choose ${o.label}`}
           {!choosing && <ArrowRight className="size-4" />}
         </button>
-      </div>
+      </div>}
     </article>
   )
 }
 
 export function Options({ plan, selected, choosing, onChoose }: {
-  plan: TripPlan; selected: Tier | null; choosing: Tier | null; onChoose: (t: Tier) => void
+  plan: TripPlan; selected: Tier | null; choosing: Tier | null; onChoose?: (t: Tier) => void
 }) {
   return (
     <div className="space-y-5">
@@ -151,7 +151,7 @@ export function Options({ plan, selected, choosing, onChoose }: {
       <div className="grid gap-4 pt-1 @3xl:grid-cols-3">
         {plan.options.map(o => (
           <OptionCard key={o.tier} o={o} plan={plan} selected={selected === o.tier} choosing={choosing === o.tier}
-            disabled={choosing != null} onChoose={() => onChoose(o.tier)} />
+            disabled={choosing != null} onChoose={onChoose ? () => onChoose(o.tier) : undefined} />
         ))}
       </div>
       <p className="text-xs text-faint">

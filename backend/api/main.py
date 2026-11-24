@@ -13,8 +13,10 @@ import asyncio
 import json
 import logging
 import re
+import secrets
 import threading
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 from urllib.parse import urlparse
 
@@ -120,6 +122,32 @@ async def block_cross_site_writes(request: Request, call_next):
 app.include_router(account_router)
 
 
+# ------------------------------------------------------------------ fair use
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _today() -> str:
+    return datetime.now(IST).strftime("%Y-%m-%d")  # limits reset at midnight India time
+
+
+def use_ai_request(user) -> None:
+    """Count one AI request for this user today; refuse once the daily limit is reached."""
+    limit = settings.daily_ai_limit
+    if limit <= 0:
+        return
+    if db.usage_get(user["id"], _today(), "ai") >= limit:
+        raise HTTPException(429, f"You've used all {limit} AI requests for today. "
+                                 "They reset at midnight (India time). Your saved trips still work.")
+    db.usage_add(user["id"], _today(), "ai")
+
+
+@app.get("/api/usage")
+def usage(user=Depends(auth.current_user)):
+    used = db.usage_get(user["id"], _today(), "ai")
+    return {"used": used, "limit": settings.daily_ai_limit,
+            "remaining": max(settings.daily_ai_limit - used, 0) if settings.daily_ai_limit > 0 else None}
+
+
 def _owned_trip(user, trip_id: str) -> dict:
     trip = db.get_trip(user["id"], trip_id)
     if not trip:
@@ -152,10 +180,11 @@ async def chat(req: ChatRequest, user=Depends(auth.current_user)):
     if not settings.groq_api_key:
         raise HTTPException(503, "GROQ_API_KEY is not set on the server. Add it to .env and restart.")
     owner = db.trip_owner(req.trip_id)
+    if owner is not None and owner != user["id"]:
+        raise HTTPException(404, "Trip not found.")
+    await asyncio.to_thread(use_ai_request, user)
     if owner is None:
         db.create_trip(user["id"], req.trip_id, _title_from(req.message))
-    elif owner != user["id"]:
-        raise HTTPException(404, "Trip not found.")
 
     profile = {**db.get_settings(user["id"]), "name": user["name"], "user_id": user["id"]}
     config = {"configurable": {"thread_id": req.trip_id}}
@@ -246,6 +275,7 @@ async def select_option(trip_id: str, body: SelectBody, user=Depends(auth.curren
     if not option.get("details"):
         if not settings.groq_api_key:
             raise HTTPException(503, "GROQ_API_KEY is not set on the server.")
+        await asyncio.to_thread(use_ai_request, user)
         try:
             option["details"] = await generate_details(plan, body.tier, db.get_settings(user["id"]))
         except Exception as exc:
@@ -266,6 +296,38 @@ async def select_option(trip_id: str, body: SelectBody, user=Depends(auth.curren
             "messages": [HumanMessage(f"I choose the {option['label']} option ({option['title']})."), AIMessage(reply)],
         }, as_node="planner")
     return {"plan": plan, "message": reply}
+
+
+# ------------------------------------------------------------------ public sharing
+@app.post("/api/trips/{trip_id}/share")
+def share_trip(trip_id: str, user=Depends(auth.current_user)):
+    """Create (or return) a read-only public link for this trip's plan."""
+    trip = _owned_trip(user, trip_id)
+    if not trip.get("plan"):
+        raise HTTPException(409, "Plan the trip before sharing it.")
+    token = trip.get("share_token") or secrets.token_urlsafe(12)
+    db.set_share_token(user["id"], trip_id, token)
+    return {"token": token}
+
+
+@app.delete("/api/trips/{trip_id}/share")
+def unshare_trip(trip_id: str, user=Depends(auth.current_user)):
+    _owned_trip(user, trip_id)
+    db.set_share_token(user["id"], trip_id, None)
+    return {"ok": True}
+
+
+@app.get("/api/public/trips/{token}")
+def public_trip(token: str):
+    """A shared plan: no login needed. Never includes the chat, the owner's
+    identity or text from their private uploads."""
+    trip = db.trip_by_share_token(token) if 8 <= len(token) <= 64 else None
+    if not trip or not trip.get("plan"):
+        raise HTTPException(404, "This shared trip doesn't exist or is no longer shared.")
+    plan = dict(trip["plan"])
+    plan["sources"] = [s for s in plan.get("sources") or [] if s.get("source_type") != "upload"]
+    return {"title": trip["title"], "destination": trip["destination"], "days": trip["days"],
+            "start_date": trip["start_date"], "plan": plan}
 
 
 class TripPatch(BaseModel):
@@ -353,6 +415,7 @@ class SearchRequest(BaseModel):
 
 @app.post("/api/search")
 async def search(req: SearchRequest, user=Depends(auth.current_user)):
+    await asyncio.to_thread(use_ai_request, user)
     r = await asyncio.to_thread(retrieve, req.query, 6, req.allow_web, req.destination,
                                 bool(settings.groq_api_key), user["id"])
     return {"queries": r.queries, "destination": r.destination, "used_web": r.used_web,

@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { Database, LayoutDashboard, LogOut, Menu, Plus, Settings as SettingsIcon, Star, X } from 'lucide-react'
+import { Database, Download, LayoutDashboard, LogOut, Menu, Plus, Settings as SettingsIcon, Star, WifiOff, X } from 'lucide-react'
 import { api, type TripSummary } from '../lib/api'
 import { useAuth } from '../lib/auth'
 
@@ -29,6 +29,42 @@ function NavItem({ to, icon: Icon, children, end }: { to: string; icon: typeof P
   )
 }
 
+interface InstallPromptEvent extends Event {
+  prompt: () => Promise<void>
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>
+}
+
+/** Offers "Install app" where the browser supports it (Chrome / Edge / Android). */
+function useInstallPrompt() {
+  const [event, setEvent] = useState<InstallPromptEvent | null>(null)
+  useEffect(() => {
+    const onPrompt = (e: Event) => { e.preventDefault(); setEvent(e as InstallPromptEvent) }
+    const onInstalled = () => setEvent(null)
+    window.addEventListener('beforeinstallprompt', onPrompt)
+    window.addEventListener('appinstalled', onInstalled)
+    return () => { window.removeEventListener('beforeinstallprompt', onPrompt); window.removeEventListener('appinstalled', onInstalled) }
+  }, [])
+  const install = async () => {
+    if (!event) return
+    await event.prompt()
+    await event.userChoice
+    setEvent(null)
+  }
+  return { canInstall: !!event, install }
+}
+
+function useOnline() {
+  const [online, setOnline] = useState(navigator.onLine)
+  useEffect(() => {
+    const up = () => setOnline(true)
+    const down = () => setOnline(false)
+    window.addEventListener('online', up)
+    window.addEventListener('offline', down)
+    return () => { window.removeEventListener('online', up); window.removeEventListener('offline', down) }
+  }, [])
+  return online
+}
+
 export function AppShell() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
@@ -36,6 +72,8 @@ export function AppShell() {
   const [trips, setTrips] = useState<TripSummary[]>([])
   const [loaded, setLoaded] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
+  const { canInstall, install } = useInstallPrompt()
+  const online = useOnline()
 
   const refresh = useCallback(async () => {
     try { setTrips(await api.trips()) } catch { /* handled by 401 handler */ } finally { setLoaded(true) }
@@ -61,6 +99,12 @@ export function AppShell() {
           <NavItem to="/" icon={LayoutDashboard} end>Dashboard</NavItem>
           <NavItem to="/knowledge" icon={Database}>Knowledge base</NavItem>
           <NavItem to="/settings" icon={SettingsIcon}>Settings</NavItem>
+          {canInstall && (
+            <button type="button" onClick={install}
+              className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-accent hover:bg-surface-2">
+              <Download className="size-4" /> Install app
+            </button>
+          )}
         </div>
       </div>
 
@@ -76,6 +120,10 @@ export function AppShell() {
         ))}
       </div>
 
+      <div className="flex gap-3 px-5 pb-2 text-[11px] text-faint">
+        <Link to="/privacy" className="hover:text-ink">Privacy</Link>
+        <Link to="/terms" className="hover:text-ink">Terms</Link>
+      </div>
       <div className="flex items-center gap-2.5 border-t border-line p-3">
         <Avatar name={user.name} url={user.avatar_url} />
         <div className="min-w-0 flex-1">
@@ -112,6 +160,11 @@ export function AppShell() {
             <img src="/favicon.svg" alt="" className="size-6" />
             <span className="font-serif text-lg font-semibold">TravelGenie</span>
           </div>
+          {!online && (
+            <div role="status" className="flex shrink-0 items-center justify-center gap-2 bg-warn/15 px-3 py-1.5 text-xs text-ink">
+              <WifiOff className="size-3.5 text-warn" /> You're offline: showing your saved trips. Planning and chat need internet.
+            </div>
+          )}
           <main className="min-h-0 flex-1 overflow-hidden"><Outlet /></main>
         </div>
       </div>

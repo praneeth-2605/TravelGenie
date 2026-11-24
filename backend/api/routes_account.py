@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Literal
 
 from email_validator import EmailNotValidError, validate_email
@@ -30,17 +31,20 @@ def _me(user) -> dict:
 # ------------------------------------------------------------------ auth
 @router.get("/auth/config")
 def auth_config():
-    return {"google_client_id": settings.google_client_id}
+    return {"google_client_id": settings.google_client_id, "contact_email": settings.contact_email}
 
 
 class SignupBody(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     email: str = Field(max_length=254)
     password: str = Field(max_length=200)
+    accept_terms: bool = False
 
 
 @router.post("/auth/signup")
 def signup(body: SignupBody, response: Response):
+    if not body.accept_terms:
+        raise HTTPException(422, "Please accept the Terms of Use and Privacy Policy to create an account.")
     email = _email(body.email)
     auth.validate_password(body.password)
     if db.user_by_email(email):
@@ -136,6 +140,36 @@ def change_password(body: PasswordBody, response: Response, user=Depends(auth.cu
 
 class DeleteBody(BaseModel):
     confirm: Literal["DELETE"]
+
+
+@router.get("/account/export")
+async def export_account(user=Depends(auth.current_user)):
+    """Everything we hold about this user, as one JSON file (right to access)."""
+    from langchain_core.messages import BaseMessage
+
+    trips = []
+    for summary in await asyncio.to_thread(db.list_trips, user["id"]):
+        trip = await asyncio.to_thread(db.get_trip, user["id"], summary["id"])
+        async with history.checkpointer() as saver:
+            snap = await saver.aget({"configurable": {"thread_id": summary["id"]}})
+        messages = (snap or {}).get("channel_values", {}).get("messages", []) if snap else []
+        trip["chat"] = [{"role": "user" if m.type == "human" else "assistant", "content": m.content}
+                        for m in messages if isinstance(m, BaseMessage) and m.type in ("human", "ai")]
+        trip.pop("share_token", None)
+        trips.append(trip)
+    store = get_store()
+    uploads = [d for d in await asyncio.to_thread(store.documents, user["id"]) if d.get("mine")]
+    payload = {
+        "exported_at": db.now(),
+        "account": db.public_user(user),
+        "settings": db.get_settings(user["id"]),
+        "trips": trips,
+        "uploaded_documents": uploads,
+        "usage": {"note": "Daily AI request counts are kept to enforce fair-use limits."},
+    }
+    body = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+    return Response(body, media_type="application/json",
+                    headers={"Content-Disposition": 'attachment; filename="travelgenie-my-data.json"'})
 
 
 @router.delete("/account")

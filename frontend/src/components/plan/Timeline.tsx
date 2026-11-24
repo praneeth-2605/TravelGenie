@@ -1,5 +1,6 @@
-import { Clock, CloudSun, MapPin, Sun, Sunrise, Sunset, Moon, Backpack, Lightbulb } from 'lucide-react'
+import { Backpack, Clock, CloudSun, ExternalLink, Lightbulb, MapPin, Moon, Sun, Sunrise, Sunset } from 'lucide-react'
 import { money, type TripPlan } from '../../lib/api'
+import { mapsPlace } from '../../lib/links'
 
 function slotIcon(time: string) {
   const t = time.toLowerCase()
@@ -67,6 +68,10 @@ export function Timeline({ plan, onCite, onShowOnMap }: { plan: TripPlan; onCite
                               <MapPin className="size-3" /> Show on map
                             </button>
                           )}
+                          <a href={mapsPlace(it.place.name, it.place.area, plan.trip.destination)} target="_blank" rel="noopener noreferrer"
+                            className="flex items-center gap-1 font-medium text-accent hover:underline">
+                            Google Maps <ExternalLink className="size-3" />
+                          </a>
                         </div>
                       )}
                     </div>

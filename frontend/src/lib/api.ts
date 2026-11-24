@@ -221,6 +221,7 @@ export interface ChatMessage {
 
 export interface TripDetail extends Omit<TripSummary, 'options' | 'summary' | 'map_center'> {
   plan: TripPlan | null
+  share_token: string | null
   messages: { role: 'user' | 'assistant'; content: string }[]
   brief: Trip
   bookings: string[]
@@ -296,10 +297,10 @@ const json = (method: string, body?: unknown): RequestInit => ({
 
 export const api = {
   health: () => request<Health>('/api/health'),
-  authConfig: () => request<{ google_client_id: string | null }>('/api/auth/config'),
+  authConfig: () => request<{ google_client_id: string | null; contact_email: string | null }>('/api/auth/config'),
   me: () => request<{ user: User; settings: Settings }>('/api/auth/me'),
-  signup: (name: string, email: string, password: string) =>
-    request<{ user: User; settings: Settings }>('/api/auth/signup', json('POST', { name, email, password })),
+  signup: (name: string, email: string, password: string, accept_terms: boolean) =>
+    request<{ user: User; settings: Settings }>('/api/auth/signup', json('POST', { name, email, password, accept_terms })),
   login: (email: string, password: string) =>
     request<{ user: User; settings: Settings }>('/api/auth/login', json('POST', { email, password })),
   google: (credential: string) =>
@@ -309,6 +310,7 @@ export const api = {
   updateProfile: (name: string) => request<{ user: User; settings: Settings }>('/api/account/profile', json('PUT', { name })),
   changePassword: (current_password: string | null, new_password: string) =>
     request('/api/account/password', json('PUT', { current_password, new_password })),
+  accountExportUrl: '/api/account/export',
   deleteAccount: () => request('/api/account', json('DELETE', { confirm: 'DELETE' })),
   updateSettings: (s: Partial<Settings>) => request<Settings>('/api/settings', json('PUT', s)),
 
@@ -316,6 +318,12 @@ export const api = {
   trip: (id: string) => request<TripDetail>(`/api/trips/${id}`),
   patchTrip: (id: string, body: { title?: string; favorite?: boolean }) => request(`/api/trips/${id}`, json('PATCH', body)),
   deleteTrip: (id: string) => request(`/api/trips/${id}`, json('DELETE')),
+  usage: () => request<{ used: number; limit: number; remaining: number | null }>('/api/usage'),
+  shareTrip: (id: string) => request<{ token: string }>(`/api/trips/${id}/share`, json('POST')),
+  unshareTrip: (id: string) => request(`/api/trips/${id}/share`, json('DELETE')),
+  publicTrip: (token: string) =>
+    request<{ title: string; destination: string | null; days: number | null; start_date: string | null; plan: TripPlan }>(
+      `/api/public/trips/${encodeURIComponent(token)}`),
   selectOption: (id: string, tier: Tier) =>
     request<{ plan: TripPlan; message: string }>(`/api/trips/${id}/select`, json('POST', { tier })),
   exportUrl: (id: string, format: 'pdf' | 'ics' | 'md', option?: Tier) =>
@@ -388,7 +396,9 @@ export const uid = () =>
 export function money(value: number | null | undefined, currency: string | null | undefined) {
   if (value == null) return '—'
   try {
-    return new Intl.NumberFormat(undefined, { style: 'currency', currency: currency || 'USD', maximumFractionDigits: 0 }).format(value)
+    // Rupees use Indian grouping (₹1,50,000); other currencies follow the browser's locale.
+    const locale = (currency || '').toUpperCase() === 'INR' ? 'en-IN' : undefined
+    return new Intl.NumberFormat(locale, { style: 'currency', currency: currency || 'USD', maximumFractionDigits: 0 }).format(value)
   } catch {
     return `${currency ?? ''} ${Math.round(value).toLocaleString()}`.trim()
   }

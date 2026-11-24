@@ -3,6 +3,8 @@ import { money, TIER_META, type Tier, type TripPlan } from '../../lib/api'
 import { BreakdownBar } from './Options'
 import { MODE_ICON } from './GettingThere'
 import { DAY_COLORS } from './Timeline'
+import { LinkButtons } from './LinkButtons'
+import { stayLinks, transportLinks } from '../../lib/links'
 
 const MEAL_ICON = (meal: string) => (meal.toLowerCase().includes('breakfast') ? Coffee : Utensils)
 
@@ -22,6 +24,8 @@ export function YourPlan({ plan, tier, choosing, onRebuild, onAsk, onSwitch }: {
   const gt = o.getting_there
   const GtIcon = gt ? MODE_ICON[gt.mode as keyof typeof MODE_ICON] ?? Car : null
   const stayPlace = o.stay.place
+  const destination = plan.trip.destination ?? ''
+  const origin = plan.transport?.origin ?? plan.trip.origin ?? ''
 
   const questions = [
     'What should I book first, and when?',
@@ -61,6 +65,9 @@ export function YourPlan({ plan, tier, choosing, onRebuild, onAsk, onSwitch }: {
                 <div className="mt-1.5 font-medium capitalize">{gt.mode}{gt.duration ? ` · ${gt.duration}` : ''}</div>
                 <p className="text-sm text-muted">{gt.detail}</p>
                 {gt.cost ? <p className="mt-1 text-sm font-medium tabular-nums">{money(gt.cost, cur)} return for everyone</p> : null}
+                {origin && destination && (
+                  <LinkButtons className="mt-2" links={transportLinks(gt.mode, origin, destination, plan.days[0]?.date, plan.travelers)} />
+                )}
               </>
             ) : <p className="mt-1.5 text-sm text-muted">Add your starting city to plan the journey.</p>}
           </div>
@@ -73,6 +80,8 @@ export function YourPlan({ plan, tier, choosing, onRebuild, onAsk, onSwitch }: {
             </div>
             {o.stay.why && <p className="mt-1 text-sm text-muted">{o.stay.why}</p>}
             {stayPlace?.url && <a href={stayPlace.url} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-sm font-medium text-accent hover:underline">Website <ExternalLink className="size-3.5" /></a>}
+            <LinkButtons className="mt-2" links={stayLinks(o.stay.name, stayPlace?.area, destination,
+              plan.days[0]?.date, Math.max(plan.days.length - 1, 1), plan.travelers)} />
           </div>
         </div>
       </section>

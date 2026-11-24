@@ -1,5 +1,7 @@
 import { BedDouble, ExternalLink, MapPin } from 'lucide-react'
 import { TIER_META, type Place, type Tier, type TripPlan } from '../../lib/api'
+import { stayLinks } from '../../lib/links'
+import { LinkButtons } from './LinkButtons'
 
 const GROUPS: { tier: Place['tier']; label: string; emoji: string }[] = [
   { tier: 'budget', label: 'Budget · hostels & guesthouses', emoji: '💰' },
@@ -54,6 +56,8 @@ export function Stays({ plan, selected }: { plan: TripPlan; selected: Tier }) {
                             Website <ExternalLink className="size-3" />
                           </a>
                         )}
+                        <LinkButtons className="mt-2" links={stayLinks(s.name, s.area, plan.trip.destination ?? '',
+                          plan.days[0]?.date, Math.max(plan.days.length - 1, 1), plan.travelers)} />
                       </div>
                     </div>
                   </article>

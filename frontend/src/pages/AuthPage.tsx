@@ -38,6 +38,7 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [show, setShow] = useState(false)
+  const [agree, setAgree] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [googleId, setGoogleId] = useState<string | null>(null)
@@ -79,7 +80,7 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
     setBusy(true)
     setError(null)
     try {
-      setSession(mode === 'signup' ? await api.signup(name, email, password) : await api.login(email, password))
+      setSession(mode === 'signup' ? await api.signup(name, email, password, agree) : await api.login(email, password))
       navigate(next, { replace: true })
     } catch (err) {
       setError((err as Error).message)
@@ -130,6 +131,10 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
           {googleId && (
             <>
               <div ref={googleBtn} className="mt-7 flex min-h-[44px] w-full justify-center" />
+              <p className="mt-2 text-center text-[11px] text-faint">
+                By continuing with Google you agree to the <Link to="/terms" className="hover:underline">Terms</Link> and{' '}
+                <Link to="/privacy" className="hover:underline">Privacy Policy</Link>.
+              </p>
               <div className="my-6 flex items-center gap-3 text-xs text-faint">
                 <span className="h-px flex-1 bg-line" /> or with email <span className="h-px flex-1 bg-line" />
               </div>
@@ -160,6 +165,16 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
               </div>
             </label>
             {mode === 'signup' && <p className="mt-1.5 text-xs text-faint">At least 8 characters, with a number or symbol.</p>}
+            {mode === 'signup' && (
+              <label className="mt-4 flex items-start gap-2.5 text-sm text-muted">
+                <input type="checkbox" checked={agree} onChange={e => setAgree(e.target.checked)} required
+                  className="mt-0.5 size-4 shrink-0 accent-[var(--accent)]" />
+                <span>
+                  I'm 18 or older and agree to the <Link to="/terms" target="_blank" className="text-accent hover:underline">Terms of Use</Link> and{' '}
+                  <Link to="/privacy" target="_blank" className="text-accent hover:underline">Privacy Policy</Link>.
+                </span>
+              </label>
+            )}
 
             {error && <p role="alert" className="mt-4 rounded-lg border border-bad/30 bg-bad/10 px-3 py-2 text-sm text-bad">{error}</p>}
 

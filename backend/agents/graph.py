@@ -277,10 +277,20 @@ def _compact_plan(plan: dict) -> str:
 
 
 def _budget_problem(plan: TripPlan, lo: float | None, hi: float | None, currency: str) -> str | None:
-    """Describe how the 'yours' option misses the traveller's range, if it does."""
+    """Describe how the options break the rules, if they do: Budget must be the cheapest,
+    Luxury clearly the most expensive, and "yours" inside the traveller's range."""
+    tiers = {o.tier: o for o in plan.options}
+    budget, luxury, yours = tiers["budget"], tiers["luxury"], tiers["yours"]
+    if luxury.total < max(yours.total, budget.total) * 1.15:
+        return (f'The luxury option totals {money(luxury.total, currency)} but must be clearly the most premium and '
+                f'expensive of the three (yours is {money(yours.total, currency)}). Upgrade luxury (top stay, flights or '
+                f'private transfers, fine dining, special experiences) so it costs well above the others. '
+                f'Keep budget and yours as they are. Keep breakdown sums exact.')
+    if budget.total > yours.total:
+        return (f'The budget option ({money(budget.total, currency)}) must be the cheapest of the three, but "yours" is '
+                f'{money(yours.total, currency)}. Make budget cheaper. Keep breakdown sums exact.')
     if not hi:
         return None
-    yours = next(o for o in plan.options if o.tier == "yours")
     target_lo = (lo or hi * 0.85)
     if yours.total < target_lo * 0.97:
         return (f'The "yours" option totals {money(yours.total, currency)}, below the traveller\'s range of '
@@ -334,7 +344,7 @@ async def planner(state: GraphState) -> dict:
         problem = _budget_problem(plan, lo, hi, currency)
         if problem:
             log.info("planner budget correction: %s", problem)
-            emit("planner", "running", "Adjusting “Your budget” to fit your range")
+            emit("planner", "running", "Checking the three options and adjusting")
             fixed = await ask_json(planner_llm(), [*messages, AIMessage(plan.model_dump_json()),
                                                    HumanMessage(problem + " Return the corrected full JSON only.")], TripPlan)
             if not _budget_problem(fixed, lo, hi, currency):
